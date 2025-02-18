@@ -1,0 +1,28 @@
+services:
+  zunda:
+    hostname: zunda
+    build:
+      context: ../
+      dockerfile: ./docker/Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+        USERNAME: ${USERNAME:-user}
+        GROUPNAME: ${GROUPNAME:-user}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - DISPLAY=${DISPLAY}
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - NUMBA_CACHE_DIR=/tmp
+    volumes:
+      - ../:/ws
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    runtime: nvidia
+    tty: true
+    stdin_open: true
