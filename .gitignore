@@ -2,3 +2,8 @@
 /data/*
 !/data/.gitkeep
 
+/work_dirs/*
+!/work_dirs/.gitkeep
+
+
+.token
