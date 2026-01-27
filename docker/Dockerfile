@@ -16,6 +16,9 @@ RUN pip install neptune
 RUN pip install openmim
 RUN mim install mmengine "mmcv>=2.0.0" mmpretrain
 
+# zundaパッケージのインストール（実行時にボリュームマウントされるため、ENTRYPOINTで実行）
+# ただし、setup.pyとzundaフォルダが存在する場合のみインストール
+
 # ユーザー指定
 ARG UID
 ARG GID
@@ -26,9 +29,15 @@ RUN groupadd -g $GID $GROUPNAME
 RUN useradd -m -u $UID -g $GID $USERNAME
 
 RUN chown $USERNAME:$GROUPNAME -R /ws
+
+# entrypointスクリプトを作成（USER切り替え前に実行）
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh && chown $USERNAME:$GROUPNAME /entrypoint.sh
+
 USER $USERNAME
 
 # ターミナルの色指定
 RUN echo "PS1='\[\e[41;37m\]\u@\h\[\e[0m\]:\[\e[34m\]\w\[\e[0m\]$ '" >> /home/$USERNAME/.bashrc
 
-ENTRYPOINT ["/bin/bash"]
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/bin/bash"]
