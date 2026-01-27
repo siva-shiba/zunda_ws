@@ -1,0 +1,7 @@
+# WANDB API Key
+# このファイルを`.wandb`にコピーして、APIキーを記述してください
+# 
+# 使用方法:
+# 1. このファイルをコピー: cp .wandb.example .wandb
+# 2. 以下の行にWANDBのAPIキーを記述
+your_api_key_here

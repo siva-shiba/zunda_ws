@@ -10,14 +10,13 @@ RUN apt update && \
 
 # pip install
 RUN pip install --upgrade pip
-RUN pip install neptune
+RUN pip install neptune wandb
 
 # openmim & openmmlab 関連のインストール
 RUN pip install openmim
 RUN mim install mmengine "mmcv>=2.0.0" mmpretrain
 
 # zundaパッケージのインストール（実行時にボリュームマウントされるため、ENTRYPOINTで実行）
-# ただし、setup.pyとzundaフォルダが存在する場合のみインストール
 
 # ユーザー指定
 ARG UID

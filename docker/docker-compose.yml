@@ -20,9 +20,13 @@ services:
       - DISPLAY=${DISPLAY}
       - NVIDIA_DRIVER_CAPABILITIES=all
       - NUMBA_CACHE_DIR=/tmp
+      - WANDB_API_KEY=${WANDB_API_KEY:-}
+      - WANDB_MODE=${WANDB_MODE:-online}
+      - DOCKER_CONTAINER=true
     volumes:
       - ../:/ws
       - /tmp/.X11-unix:/tmp/.X11-unix
+    shm_size: 64gb
     runtime: nvidia
     tty: true
     stdin_open: true
