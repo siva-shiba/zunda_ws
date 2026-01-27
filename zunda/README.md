@@ -215,6 +215,79 @@ DataLoaderを作成するヘルパー関数。
 - `train_ratio + val_ratio + test_ratio` は 1.0 である必要があります
 - 分割はランダムに行われますが、`random_seed`を指定することで再現可能です
 
+### `TouhokuProjectClassificationDataset`
+
+キャラクター名をラベルとして使用する分類タスク用のデータセットクラス。
+
+**パラメータ:**
+- `data_root` (str): データセットのルートディレクトリパス
+- `transform` (Callable, optional): 画像に適用する変換（PIL Image -> Tensor等）
+- `text_transform` (Callable, optional): テキストに適用する変換
+- `image_extensions` (List[str], optional): 読み込む画像ファイルの拡張子リスト（デフォルト: `['.png', '.jpg', '.jpeg', '.bmp']`）
+
+**戻り値:**
+- `dict`: {
+    - `'image'`: 変換後の画像（PIL Image または Tensor）
+    - `'label'`: クラスラベル（整数）
+    - `'class_name'`: クラス名（文字列）
+    - `'text'`: テキスト（タグ）文字列
+    - `'image_path'`: 画像ファイルパス
+    - `'text_path'`: テキストファイルパス（存在しない場合は空文字列）
+  }
+
+**メソッド:**
+- `get_class_names()`: すべてのクラス名のリストを取得
+- `get_class_to_idx()`: クラス名からインデックスへのマッピングを取得
+- `get_idx_to_class()`: インデックスからクラス名へのマッピングを取得
+
+**プロパティ:**
+- `num_classes`: クラス数
+
+### `create_classification_dataloader`
+
+分類タスク用のDataLoaderを作成する関数。
+
+**パラメータ:**
+- `data_root` (str): データセットのルートディレクトリパス
+- `batch_size` (int): バッチサイズ（デフォルト: 32）
+- `shuffle` (bool): データをシャッフルするか（デフォルト: True）
+- `num_workers` (int): データローディングのワーカー数（デフォルト: 4）
+- `pin_memory` (bool): GPU転送を高速化するためにメモリをピン留めするか（デフォルト: True）
+- `image_transform` (Callable, optional): 画像に適用する変換（Noneの場合はToTensorのみ）
+- `text_transform` (Callable, optional): テキストに適用する変換
+- `image_extensions` (List[str], optional): 読み込む画像ファイルの拡張子リスト
+
+**戻り値:**
+- `Tuple[DataLoader, Dict[str, int], Dict[int, str]]`: (dataloader, class_to_idx, idx_to_class)
+
+### `create_classification_train_val_test_dataloaders`
+
+分類タスク用にデータセットをtrain/val/testに分割してDataLoaderを作成する関数。
+
+**パラメータ:**
+- `data_root` (str): データセットのルートディレクトリパス
+- `train_ratio` (float): 学習データの割合（デフォルト: 0.7）
+- `val_ratio` (float): 検証データの割合（デフォルト: 0.15）
+- `test_ratio` (float): テストデータの割合（デフォルト: 0.15）
+- `batch_size` (int): バッチサイズ（デフォルト: 32）
+- `shuffle_train` (bool): 学習データをシャッフルするか（デフォルト: True）
+- `num_workers` (int): データローディングのワーカー数（デフォルト: 4）
+- `pin_memory` (bool): GPU転送を高速化するためにメモリをピン留めするか（デフォルト: True）
+- `train_transform` (Callable, optional): 学習データに適用する画像変換
+- `val_transform` (Callable, optional): 検証データに適用する画像変換（Noneの場合はtrain_transformと同じ）
+- `test_transform` (Callable, optional): テストデータに適用する画像変換（Noneの場合はval_transformと同じ）
+- `text_transform` (Callable, optional): テキストに適用する変換
+- `image_extensions` (List[str], optional): 読み込む画像ファイルの拡張子リスト
+- `random_seed` (int, optional): ランダムシード（再現性のため）
+
+**戻り値:**
+- `Tuple[DataLoader, DataLoader, DataLoader, Dict[str, int], Dict[int, str]]`: 
+  (train_loader, val_loader, test_loader, class_to_idx, idx_to_class)
+
+**注意:**
+- `train_ratio + val_ratio + test_ratio` は 1.0 である必要があります
+- 分割はランダムに行われますが、`random_seed`を指定することで再現可能です
+
 ## データ構造
 
 データセットは以下の構造を想定しています：
@@ -235,6 +308,76 @@ data/touhoku_project_images/
 - 画像ファイルと同名の`.txt`ファイルがペアとして扱われます
 - `.txt`ファイルにはLoRA学習用のタグ（カンマ区切り）が含まれています
 - テキストファイルが存在しない画像も読み込めます（テキストは空文字列になります）
+
+## 分類タスク用データセット
+
+キャラクター名をラベルとして使用する分類タスク用のデータセットも提供しています。
+
+### 基本的な使い方
+
+```python
+from zunda import TouhokuProjectClassificationDataset
+
+# データセットを作成
+dataset = TouhokuProjectClassificationDataset(
+    data_root='data/touhoku_project_images',
+)
+
+print(f"データセットサイズ: {len(dataset)}")
+print(f"クラス数: {dataset.num_classes}")
+print(f"クラス一覧: {dataset.get_class_names()}")
+
+# サンプルを取得
+sample = dataset[0]
+image = sample['image']      # PIL Image
+label = sample['label']       # クラスラベル（整数）
+class_name = sample['class_name']  # クラス名（文字列）
+```
+
+### train/val/testに分割
+
+```python
+from zunda import create_classification_train_val_test_dataloaders
+from torchvision import transforms
+
+train_transform = transforms.Compose([
+    transforms.Resize((256, 256)),
+    transforms.RandomHorizontalFlip(),
+    transforms.ToTensor(),
+])
+
+val_transform = transforms.Compose([
+    transforms.Resize((256, 256)),
+    transforms.ToTensor(),
+])
+
+train_loader, val_loader, test_loader, class_to_idx, idx_to_class = \
+    create_classification_train_val_test_dataloaders(
+        data_root='data/touhoku_project_images',
+        train_ratio=0.7,
+        val_ratio=0.15,
+        test_ratio=0.15,
+        batch_size=32,
+        train_transform=train_transform,
+        val_transform=val_transform,
+        random_seed=42,
+    )
+
+# 学習ループ
+for batch in train_loader:
+    images = batch['image']  # [batch_size, C, H, W]
+    labels = batch['label']  # [batch_size] の整数テンソル
+    # 学習処理...
+```
+
+### キャラクター名の正規化ルール
+
+データセットは以下のルールでキャラクター名を正規化します：
+
+1. **`キャラ名_〇〇`形式**: `itako_oc`, `itako_sd`, `zunko_sd` などは、ベース名（`itako`, `zunko`）に丸められます
+2. **特殊なマッピング**:
+   - `"20_zdm 1boy"` → `"zundamon"`
+   - `"png_rgb_txt_deepdan"` → `"未分類"`
 
 ## 使用例
 
