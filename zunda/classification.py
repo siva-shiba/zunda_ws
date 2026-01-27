@@ -4,11 +4,9 @@ from pathlib import Path
 from typing import Optional, List, Callable, Dict, Tuple
 from PIL import Image
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader, random_split
 
 from .dataset import TouhokuProjectDataset
-from torch.utils.data import DataLoader
-from typing import Tuple
 
 
 def normalize_character_name(folder_name: str) -> str:
@@ -258,6 +256,7 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
         text_transform: Optional[Callable] = None,
         image_extensions: Optional[List[str]] = None,
         random_seed: Optional[int] = None,
+        exclude_from_train_val: Optional[List[str]] = None,
     ) -> Tuple[DataLoader, DataLoader, DataLoader, Dict[str, int], Dict[int, str]]:
         """分類タスク用にデータセットをtrain/val/testに分割してDataLoaderを作成するクラスメソッド.
         
@@ -276,6 +275,8 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
             text_transform: テキストに適用する変換
             image_extensions: 読み込む画像ファイルの拡張子リスト
             random_seed: ランダムシード（再現性のため）
+            exclude_from_train_val: train/valから除外し、testセットのみに含めるクラス名のリスト
+                                  （デフォルト: ["unknown"] - unknownクラスをテストセットのみに含める）
         
         Returns:
             Tuple[DataLoader, DataLoader, DataLoader, Dict[str, int], Dict[int, str]]: 
@@ -284,34 +285,158 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
         Raises:
             ValueError: train_ratio + val_ratio + test_ratio が 1.0 でない場合
         """
-        # 親クラスのメソッドを呼び出して分割ロジックを再利用
-        train_loader, val_loader, test_loader = cls.create_train_val_test_dataloaders(
+        # 割合の検証
+        total_ratio = train_ratio + val_ratio + test_ratio
+        if abs(total_ratio - 1.0) > 1e-6:
+            raise ValueError(
+                f"train_ratio + val_ratio + test_ratio は 1.0 である必要があります。"
+                f"現在の値: {total_ratio}"
+            )
+        
+        # デフォルトでunknownクラスを除外
+        if exclude_from_train_val is None:
+            exclude_from_train_val = ["unknown"]
+        
+        # ランダムシードの設定
+        if random_seed is not None:
+            torch.manual_seed(random_seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(random_seed)
+        
+        # デフォルトの画像変換
+        from torchvision import transforms
+        if train_transform is None:
+            train_transform = transforms.Compose([
+                transforms.ToTensor(),
+            ])
+        if val_transform is None:
+            val_transform = train_transform
+        if test_transform is None:
+            test_transform = val_transform
+        
+        # データセットを作成（変換なしで一度作成してサイズを取得）
+        full_dataset = cls(
             data_root=data_root,
-            train_ratio=train_ratio,
-            val_ratio=val_ratio,
-            test_ratio=test_ratio,
-            batch_size=batch_size,
-            shuffle_train=shuffle_train,
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-            train_transform=train_transform,
-            val_transform=val_transform,
-            test_transform=test_transform,
+            transform=None,  # 後で分割後に適用
             text_transform=text_transform,
             image_extensions=image_extensions,
-            random_seed=random_seed,
         )
         
-        # クラスマッピングを取得（最初のデータセットから）
-        # データセットを作成してクラスマッピングを取得
-        from torchvision import transforms
-        temp_dataset = cls(
-            data_root=data_root,
-            transform=None,
-            text_transform=text_transform,
-            image_extensions=image_extensions,
+        # クラスマッピングを保存
+        class_to_idx = full_dataset.get_class_to_idx()
+        idx_to_class = full_dataset.get_idx_to_class()
+        
+        # 除外するクラスのインデックスを取得
+        exclude_indices = set()
+        for class_name in exclude_from_train_val:
+            if class_name in class_to_idx:
+                exclude_indices.add(class_to_idx[class_name])
+        
+        # サンプルを除外クラスとそれ以外に分離
+        exclude_samples = []
+        include_samples = []
+        
+        for idx in range(len(full_dataset)):
+            img_path, txt_path, label_idx = full_dataset.samples[idx]
+            if label_idx in exclude_indices:
+                exclude_samples.append(idx)
+            else:
+                include_samples.append(idx)
+        
+        # 除外クラス以外のデータセットを作成
+        if len(include_samples) == 0:
+            raise ValueError("除外クラス以外のデータが存在しません。")
+        
+        # インデックスでサブセットを作成するためのカスタムデータセット
+        class FilteredDataset:
+            def __init__(self, base_dataset, indices):
+                self.base_dataset = base_dataset
+                self.indices = indices
+            
+            def __len__(self):
+                return len(self.indices)
+            
+            def __getitem__(self, idx):
+                return self.base_dataset[self.indices[idx]]
+        
+        include_dataset = FilteredDataset(full_dataset, include_samples)
+        
+        # 除外クラス以外のデータをtrain/val/testに分割
+        dataset_size = len(include_dataset)
+        train_size = int(train_ratio * dataset_size)
+        val_size = int(val_ratio * dataset_size)
+        test_size = dataset_size - train_size - val_size  # 端数処理のため
+        
+        train_dataset, val_dataset, test_dataset = random_split(
+            include_dataset,
+            [train_size, val_size, test_size],
+            generator=torch.Generator().manual_seed(random_seed if random_seed is not None else 42)
         )
-        class_to_idx = temp_dataset.get_class_to_idx()
-        idx_to_class = temp_dataset.get_idx_to_class()
+        
+        # 除外クラスをテストセットに追加
+        if len(exclude_samples) > 0:
+            exclude_dataset = FilteredDataset(full_dataset, exclude_samples)
+            # 既存のテストセットと除外クラスのデータセットを結合
+            class CombinedDataset:
+                def __init__(self, dataset1, dataset2):
+                    self.dataset1 = dataset1
+                    self.dataset2 = dataset2
+                
+                def __len__(self):
+                    return len(self.dataset1) + len(self.dataset2)
+                
+                def __getitem__(self, idx):
+                    if idx < len(self.dataset1):
+                        return self.dataset1[idx]
+                    else:
+                        return self.dataset2[idx - len(self.dataset1)]
+            
+            test_dataset = CombinedDataset(test_dataset, exclude_dataset)
+        
+        # 各データセットに変換を適用するためのラッパー
+        class TransformDataset:
+            def __init__(self, base_dataset, transform):
+                self.base_dataset = base_dataset
+                self.transform = transform
+            
+            def __len__(self):
+                return len(self.base_dataset)
+            
+            def __getitem__(self, idx):
+                sample = self.base_dataset[idx]
+                # sampleは辞書なので、コピーを作成してから変換を適用
+                result = sample.copy()
+                if self.transform and 'image' in result:
+                    result['image'] = self.transform(result['image'])
+                return result
+        
+        train_dataset_transformed = TransformDataset(train_dataset, train_transform)
+        val_dataset_transformed = TransformDataset(val_dataset, val_transform)
+        test_dataset_transformed = TransformDataset(test_dataset, test_transform)
+        
+        # DataLoaderを作成
+        train_loader = DataLoader(
+            train_dataset_transformed,
+            batch_size=batch_size,
+            shuffle=shuffle_train,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+        
+        val_loader = DataLoader(
+            val_dataset_transformed,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+        
+        test_loader = DataLoader(
+            test_dataset_transformed,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
         
         return train_loader, val_loader, test_loader, class_to_idx, idx_to_class
