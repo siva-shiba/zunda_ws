@@ -39,6 +39,40 @@ def normalize_character_name(folder_name: str) -> str:
     return folder_name
 
 
+def extract_base_filename(filename: str) -> List[str]:
+    """ファイル名からベース名を抽出（-a, -bなどのサフィックスを考慮）.
+
+    例:
+        "a1zunko77-b.png" -> ["a1zunko77-b", "a1zunko77"]
+        "a1zunko77.png" -> ["a1zunko77"]
+        "ita_3008.png" -> ["ita_3008"]
+
+    Args:
+        filename: ファイル名（拡張子ありでもなしでも可）
+
+    Returns:
+        ベース名のリスト（完全なファイル名から、サフィックスを除いたものまで）
+    """
+    # 拡張子を除去
+    stem = Path(filename).stem
+
+    # ベース名の候補リスト
+    base_names = [stem]
+
+    # -a, -b, -c などのパターンを検出
+    # 例: "a1zunko77-b" -> ["a1zunko77-b", "a1zunko77"]
+    if '-' in stem:
+        # 最後の"-"以降を削除したベース名も追加
+        parts = stem.rsplit('-', 1)
+        if len(parts) == 2:
+            # 最後の部分が1文字のアルファベットまたは数字の場合
+            suffix = parts[1]
+            if len(suffix) == 1 and (suffix.isalpha() or suffix.isdigit()):
+                base_names.append(parts[0])
+
+    return base_names
+
+
 class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
     """東北ずん子project画像データセット（分類タスク用）.
 
@@ -82,7 +116,11 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
         samples = []
         class_to_idx = {}
 
-        # 再帰的に画像ファイルを検索
+        # ファイル名からクラス名へのマッピングを作成（rgb_zzm_プレフィックスを持つファイルのクラス推測用）
+        # 既に分類されているデータから、ファイル名→クラス名のマッピングを作成
+        filename_to_class: Dict[str, str] = {}
+
+        # まず、すべての画像をスキャンしてファイル名→クラス名のマッピングを作成
         for img_path in self.data_root.rglob('*'):
             if not img_path.is_file():
                 continue
@@ -92,9 +130,34 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
                 continue
 
             # キャラクター名を取得（ROOT/絵師/キャラ名/画像.png の構造から）
-            # img_path.parent = キャラ名フォルダ
-            # img_path.parent.parent = 絵師フォルダ
-            # img_path.parent.parent.parent = ROOT
+            try:
+                character_folder = img_path.parent.name
+            except (IndexError, AttributeError):
+                continue
+
+            # キャラクター名を正規化
+            normalized_name = normalize_character_name(character_folder)
+
+            # rgb_zzm_プレフィックスでないファイルの場合、ファイル名→クラス名のマッピングに追加
+            filename = img_path.name
+            if not filename.startswith('rgb_zzm_'):
+                # ファイル名のベース名（-a, -bなどのサフィックスを考慮）を取得
+                base_names = extract_base_filename(filename)
+                for base_name in base_names:
+                    # 各ベース名に対してマッピングを作成（既存のものは上書きしない）
+                    if base_name not in filename_to_class:
+                        filename_to_class[base_name] = normalized_name
+
+        # 次に、すべての画像を処理してサンプルを作成
+        for img_path in self.data_root.rglob('*'):
+            if not img_path.is_file():
+                continue
+
+            # 画像ファイルかチェック
+            if img_path.suffix.lower() not in self.image_extensions:
+                continue
+
+            # キャラクター名を取得（ROOT/絵師/キャラ名/画像.png の構造から）
             try:
                 character_folder = img_path.parent.name
             except (IndexError, AttributeError):
@@ -103,6 +166,27 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
 
             # キャラクター名を正規化
             normalized_name = normalize_character_name(character_folder)
+
+            # rgb_zzm_プレフィックスを持つファイルの場合、ファイル名から元のファイル名を推測
+            filename = img_path.name
+            if filename.startswith('rgb_zzm_'):
+                # rgb_zzm_プレフィックスを削除して元のファイル名を取得
+                original_filename = filename[8:]  # 'rgb_zzm_' の8文字を削除
+
+                # ベース名の候補を取得（-a, -bなどのサフィックスを考慮）
+                base_names = extract_base_filename(original_filename)
+
+                # ファイル名→クラス名のマッピングからクラス名を取得
+                matched_class = None
+                for base_name in base_names:
+                    if base_name in filename_to_class:
+                        matched_class = filename_to_class[base_name]
+                        break
+
+                if matched_class:
+                    # 見つかった場合は、そのクラス名を使用
+                    normalized_name = matched_class
+                    # print(f"ファイル名からクラスを推測: {filename} -> {normalized_name} (マッチ: {base_name})")
 
             # クラスIDを取得または作成
             if normalized_name not in class_to_idx:
@@ -183,7 +267,7 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
     def get_idx_to_class(self) -> Dict[int, str]:
         """インデックスからクラス名へのマッピングを取得."""
         return self.idx_to_class.copy()
-    
+
     @classmethod
     def create_classification_dataloader(
         cls,
@@ -197,7 +281,7 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
         image_extensions: Optional[List[str]] = None,
     ) -> Tuple[DataLoader, Dict[str, int], Dict[int, str]]:
         """分類タスク用のDataLoaderを作成するクラスメソッド.
-        
+
         Args:
             data_root: データセットのルートディレクトリパス
             batch_size: バッチサイズ
@@ -207,19 +291,19 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
             image_transform: 画像に適用する変換（Noneの場合はデフォルト変換を使用）
             text_transform: テキストに適用する変換
             image_extensions: 読み込む画像ファイルの拡張子リスト
-        
+
         Returns:
-            Tuple[DataLoader, Dict[str, int], Dict[int, str]]: 
+            Tuple[DataLoader, Dict[str, int], Dict[int, str]]:
                 (dataloader, class_to_idx, idx_to_class)
         """
         from torchvision import transforms
-        
+
         # デフォルトの画像変換（PIL Image -> Tensor）
         if image_transform is None:
             image_transform = transforms.Compose([
                 transforms.ToTensor(),
             ])
-        
+
         # データセットを作成
         dataset = cls(
             data_root=data_root,
@@ -227,7 +311,7 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
             text_transform=text_transform,
             image_extensions=image_extensions,
         )
-        
+
         # DataLoaderを作成
         dataloader = DataLoader(
             dataset,
@@ -236,9 +320,9 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
-        
+
         return dataloader, dataset.get_class_to_idx(), dataset.get_idx_to_class()
-    
+
     @classmethod
     def create_classification_train_val_test_dataloaders(
         cls,
@@ -259,7 +343,7 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
         exclude_from_train_val: Optional[List[str]] = None,
     ) -> Tuple[DataLoader, DataLoader, DataLoader, Dict[str, int], Dict[int, str]]:
         """分類タスク用にデータセットをtrain/val/testに分割してDataLoaderを作成するクラスメソッド.
-        
+
         Args:
             data_root: データセットのルートディレクトリパス
             train_ratio: 学習データの割合（デフォルト: 0.7）
@@ -277,11 +361,11 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
             random_seed: ランダムシード（再現性のため）
             exclude_from_train_val: train/valから除外し、testセットのみに含めるクラス名のリスト
                                   （デフォルト: ["unknown"] - unknownクラスをテストセットのみに含める）
-        
+
         Returns:
-            Tuple[DataLoader, DataLoader, DataLoader, Dict[str, int], Dict[int, str]]: 
+            Tuple[DataLoader, DataLoader, DataLoader, Dict[str, int], Dict[int, str]]:
                 (train_loader, val_loader, test_loader, class_to_idx, idx_to_class)
-        
+
         Raises:
             ValueError: train_ratio + val_ratio + test_ratio が 1.0 でない場合
         """
@@ -292,17 +376,17 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
                 f"train_ratio + val_ratio + test_ratio は 1.0 である必要があります。"
                 f"現在の値: {total_ratio}"
             )
-        
+
         # デフォルトでunknownクラスを除外
         if exclude_from_train_val is None:
             exclude_from_train_val = ["unknown"]
-        
+
         # ランダムシードの設定
         if random_seed is not None:
             torch.manual_seed(random_seed)
             if torch.cuda.is_available():
                 torch.cuda.manual_seed_all(random_seed)
-        
+
         # デフォルトの画像変換
         from torchvision import transforms
         if train_transform is None:
@@ -313,7 +397,7 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
             val_transform = train_transform
         if test_transform is None:
             test_transform = val_transform
-        
+
         # データセットを作成（変換なしで一度作成してサイズを取得）
         full_dataset = cls(
             data_root=data_root,
@@ -321,58 +405,58 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
             text_transform=text_transform,
             image_extensions=image_extensions,
         )
-        
+
         # クラスマッピングを保存
         class_to_idx = full_dataset.get_class_to_idx()
         idx_to_class = full_dataset.get_idx_to_class()
-        
+
         # 除外するクラスのインデックスを取得
         exclude_indices = set()
         for class_name in exclude_from_train_val:
             if class_name in class_to_idx:
                 exclude_indices.add(class_to_idx[class_name])
-        
+
         # サンプルを除外クラスとそれ以外に分離
         exclude_samples = []
         include_samples = []
-        
+
         for idx in range(len(full_dataset)):
             img_path, txt_path, label_idx = full_dataset.samples[idx]
             if label_idx in exclude_indices:
                 exclude_samples.append(idx)
             else:
                 include_samples.append(idx)
-        
+
         # 除外クラス以外のデータセットを作成
         if len(include_samples) == 0:
             raise ValueError("除外クラス以外のデータが存在しません。")
-        
+
         # インデックスでサブセットを作成するためのカスタムデータセット
         class FilteredDataset:
             def __init__(self, base_dataset, indices):
                 self.base_dataset = base_dataset
                 self.indices = indices
-            
+
             def __len__(self):
                 return len(self.indices)
-            
+
             def __getitem__(self, idx):
                 return self.base_dataset[self.indices[idx]]
-        
+
         include_dataset = FilteredDataset(full_dataset, include_samples)
-        
+
         # 除外クラス以外のデータをtrain/val/testに分割
         dataset_size = len(include_dataset)
         train_size = int(train_ratio * dataset_size)
         val_size = int(val_ratio * dataset_size)
         test_size = dataset_size - train_size - val_size  # 端数処理のため
-        
+
         train_dataset, val_dataset, test_dataset = random_split(
             include_dataset,
             [train_size, val_size, test_size],
             generator=torch.Generator().manual_seed(random_seed if random_seed is not None else 42)
         )
-        
+
         # 除外クラスをテストセットに追加
         if len(exclude_samples) > 0:
             exclude_dataset = FilteredDataset(full_dataset, exclude_samples)
@@ -381,27 +465,27 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
                 def __init__(self, dataset1, dataset2):
                     self.dataset1 = dataset1
                     self.dataset2 = dataset2
-                
+
                 def __len__(self):
                     return len(self.dataset1) + len(self.dataset2)
-                
+
                 def __getitem__(self, idx):
                     if idx < len(self.dataset1):
                         return self.dataset1[idx]
                     else:
                         return self.dataset2[idx - len(self.dataset1)]
-            
+
             test_dataset = CombinedDataset(test_dataset, exclude_dataset)
-        
+
         # 各データセットに変換を適用するためのラッパー
         class TransformDataset:
             def __init__(self, base_dataset, transform):
                 self.base_dataset = base_dataset
                 self.transform = transform
-            
+
             def __len__(self):
                 return len(self.base_dataset)
-            
+
             def __getitem__(self, idx):
                 sample = self.base_dataset[idx]
                 # sampleは辞書なので、コピーを作成してから変換を適用
@@ -409,11 +493,11 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
                 if self.transform and 'image' in result:
                     result['image'] = self.transform(result['image'])
                 return result
-        
+
         train_dataset_transformed = TransformDataset(train_dataset, train_transform)
         val_dataset_transformed = TransformDataset(val_dataset, val_transform)
         test_dataset_transformed = TransformDataset(test_dataset, test_transform)
-        
+
         # DataLoaderを作成
         train_loader = DataLoader(
             train_dataset_transformed,
@@ -422,7 +506,7 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
-        
+
         val_loader = DataLoader(
             val_dataset_transformed,
             batch_size=batch_size,
@@ -430,7 +514,7 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
-        
+
         test_loader = DataLoader(
             test_dataset_transformed,
             batch_size=batch_size,
@@ -438,5 +522,5 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
-        
+
         return train_loader, val_loader, test_loader, class_to_idx, idx_to_class
