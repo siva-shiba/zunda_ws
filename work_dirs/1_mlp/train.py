@@ -15,6 +15,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision import transforms
 import numpy as np
+from sklearn.model_selection import StratifiedKFold
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent.parent
@@ -25,6 +26,7 @@ from zunda import TouhokuProjectClassificationDataset
 from zunda.callbacks import Callback, CallbackRunner, LoggingCallback, WandbCallback
 from model import SimpleMLP
 from predictor import Predictor
+from cross_validation import run_cross_validation
 
 
 def setup_logging(log_dir: str, log_level: str = "INFO") -> logging.Logger:
@@ -91,11 +93,15 @@ class TrainerConfig:
     train_ratio: float = 0.7
     val_ratio: float = 0.15
     test_ratio: float = 0.15
+    # Cross Validation設定
+    use_cv: bool = False
+    cv_folds: int = 5
     # WANDB設定
     use_wandb: bool = True
     wandb_project: str = "mlp"
     wandb_entity: str = "zunda"
     wandb_run_name: str = None
+    wandb_group: str = None  # wandbのgroup名（Cross ValidationでFoldをまとめる際に使用）
     wandb_tags: list = None
     upload_checkpoint: bool = False  # チェックポイントのアップロード（デフォルト: False）
 
@@ -112,9 +118,20 @@ class ClassificationTrainer:
         # Callbackランナーを初期化
         self.runner = CallbackRunner(callbacks or [])
 
-        # データローダーを作成
-        self.train_loader, self.val_loader, self.test_loader, self.class_to_idx, self.idx_to_class = \
-            self._build_dataloaders()
+        # データローダーを作成（通常学習時のみ）
+        # Cross Validation時は外部でDataLoaderを差し替えるので、ここでは作成しない
+        if not self.cfg.use_cv:
+            self.train_loader, self.val_loader, self.test_loader, self.class_to_idx, self.idx_to_class = \
+                self._build_dataloaders()
+        else:
+            # Cross Validation時は、クラス情報だけを取得（データローダーは後で設定される）
+            temp_dataset = TouhokuProjectClassificationDataset(
+                data_root=self.cfg.data_root,
+                transform=None,
+                image_extensions=None,
+            )
+            self.class_to_idx = temp_dataset.get_class_to_idx()
+            self.idx_to_class = temp_dataset.get_idx_to_class()
 
         # モデルを作成
         input_size = cfg.image_size * cfg.image_size * 3  # RGB画像
@@ -137,6 +154,8 @@ class ClassificationTrainer:
             "train_acc": [],
             "val_loss": [],
             "val_acc": [],
+            "best_val_acc": 0.0,
+            "best_epoch": 0,
         }
 
         # チェックポイント保存ディレクトリ
@@ -320,6 +339,9 @@ class ClassificationTrainer:
                     epoch_metrics["best_val_acc"] = best_val_acc
                     epoch_metrics["best_epoch"] = best_epoch
                     checkpoint_saved = True
+                    # 履歴を更新
+                    self.history["best_val_acc"] = best_val_acc
+                    self.history["best_epoch"] = best_epoch
                 else:
                     checkpoint_saved = False
 
@@ -338,64 +360,112 @@ class ClassificationTrainer:
             torch.save(checkpoint, final_checkpoint_path)
             self.logger.info(f"最終モデルを保存しました: {final_checkpoint_path}")
 
-            # テストデータで評価
-            self.logger.info("テストデータで評価...")
-            test_loss, test_acc = self._evaluate(self.test_loader)
-            self.logger.info(f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.4f}")
+            # テストデータで評価（test_loaderが存在する場合のみ）
+            if hasattr(self, 'test_loader') and len(self.test_loader.dataset) > 0:
+                self.logger.info("テストデータで評価...")
+                test_loss, test_acc = self._evaluate(self.test_loader)
+                self.logger.info(f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.4f}")
 
-            # テスト結果をコールバックに通知
-            test_metrics = {
-                "test/loss": test_loss,
-                "test/acc": test_acc,
-                "best_val_acc": best_val_acc,
-                "best_epoch": best_epoch,
-            }
-            self.runner.call("on_eval_end", self.cfg.epochs + 1, test_metrics)
+                # テスト結果をコールバックに通知
+                test_metrics = {
+                    "test/loss": test_loss,
+                    "test/acc": test_acc,
+                    "best_val_acc": best_val_acc,
+                    "best_epoch": best_epoch,
+                }
+                self.runner.call("on_eval_end", self.cfg.epochs + 1, test_metrics)
 
             # 学習終了後、confusion matrixを生成（ベストモデルと最終モデルの両方）
-            self.logger.info("学習終了後、confusion matrixを生成中...")
+            # CVの場合はtest_loaderが空なのでスキップ
+            if hasattr(self, 'test_loader') and len(self.test_loader.dataset) > 0:
+                self.logger.info("学習終了後、confusion matrixを生成中...")
 
-            # Predictorを作成
-            predictor = Predictor(
-                model=self.model,
-                device=self.device,
-                class_to_idx=self.class_to_idx,
-                idx_to_class=self.idx_to_class,
-                logger=self.logger,
-            )
+                # Predictorを作成
+                predictor = Predictor(
+                    model=self.model,
+                    device=self.device,
+                    class_to_idx=self.class_to_idx,
+                    idx_to_class=self.idx_to_class,
+                    logger=self.logger,
+                )
 
-            # ベストモデルでconfusion matrixを生成
-            best_cm_paths = {}
-            best_checkpoint_path = self.save_dir / 'best_model.pt'
-            if best_checkpoint_path.exists():
-                self.logger.info("ベストモデルでconfusion matrixを生成中...")
-                best_checkpoint = torch.load(best_checkpoint_path, map_location=self.device)
-                self.model.load_state_dict(best_checkpoint['model_state_dict'])
+                # ベストモデルでconfusion matrixを生成
+                best_cm_paths = {}
+                best_checkpoint_path = self.save_dir / 'best_model.pt'
+                if best_checkpoint_path.exists():
+                    self.logger.info("ベストモデルでconfusion matrixを生成中...")
+                    best_checkpoint = torch.load(best_checkpoint_path, map_location=self.device)
+                    self.model.load_state_dict(best_checkpoint['model_state_dict'])
 
+                    for split_name, loader in [('train', self.train_loader), ('val', self.val_loader), ('test', self.test_loader)]:
+                        _, _, pred_labels, true_labels, _ = predictor.predict(loader)
+                        cm_path = predictor.create_confusion_matrix(
+                            true_labels, pred_labels, split_name,
+                            model_type='best',
+                            save_dir=self.save_dir,
+                            use_timestamp=False,
+                        )
+                        best_cm_paths[f'{split_name}_cm'] = str(cm_path)
+
+                # 最終モデルでconfusion matrixを生成
+                self.logger.info("最終モデルでconfusion matrixを生成中...")
+                self.model.load_state_dict(checkpoint['model_state_dict'])
+
+                final_cm_paths = {}
                 for split_name, loader in [('train', self.train_loader), ('val', self.val_loader), ('test', self.test_loader)]:
                     _, _, pred_labels, true_labels, _ = predictor.predict(loader)
                     cm_path = predictor.create_confusion_matrix(
                         true_labels, pred_labels, split_name,
-                        model_type='best',
+                        model_type='final',
                         save_dir=self.save_dir,
                         use_timestamp=False,
                     )
-                    best_cm_paths[f'{split_name}_cm'] = str(cm_path)
+                    final_cm_paths[f'{split_name}_cm'] = str(cm_path)
+            else:
+                # CVの場合はtrain/valのみ
+                self.logger.info("学習終了後、confusion matrixを生成中...")
 
-            # 最終モデルでconfusion matrixを生成
-            self.logger.info("最終モデルでconfusion matrixを生成中...")
-            self.model.load_state_dict(checkpoint['model_state_dict'])
-
-            final_cm_paths = {}
-            for split_name, loader in [('train', self.train_loader), ('val', self.val_loader), ('test', self.test_loader)]:
-                _, _, pred_labels, true_labels, _ = predictor.predict(loader)
-                cm_path = predictor.create_confusion_matrix(
-                    true_labels, pred_labels, split_name,
-                    model_type='final',
-                    save_dir=self.save_dir,
-                    use_timestamp=False,
+                # Predictorを作成
+                predictor = Predictor(
+                    model=self.model,
+                    device=self.device,
+                    class_to_idx=self.class_to_idx,
+                    idx_to_class=self.idx_to_class,
+                    logger=self.logger,
                 )
-                final_cm_paths[f'{split_name}_cm'] = str(cm_path)
+
+                # ベストモデルでconfusion matrixを生成
+                best_cm_paths = {}
+                best_checkpoint_path = self.save_dir / 'best_model.pt'
+                if best_checkpoint_path.exists():
+                    self.logger.info("ベストモデルでconfusion matrixを生成中...")
+                    best_checkpoint = torch.load(best_checkpoint_path, map_location=self.device)
+                    self.model.load_state_dict(best_checkpoint['model_state_dict'])
+
+                    for split_name, loader in [('train', self.train_loader), ('val', self.val_loader)]:
+                        _, _, pred_labels, true_labels, _ = predictor.predict(loader)
+                        cm_path = predictor.create_confusion_matrix(
+                            true_labels, pred_labels, split_name,
+                            model_type='best',
+                            save_dir=self.save_dir,
+                            use_timestamp=False,
+                        )
+                        best_cm_paths[f'{split_name}_cm'] = str(cm_path)
+
+                # 最終モデルでconfusion matrixを生成
+                self.logger.info("最終モデルでconfusion matrixを生成中...")
+                self.model.load_state_dict(checkpoint['model_state_dict'])
+
+                final_cm_paths = {}
+                for split_name, loader in [('train', self.train_loader), ('val', self.val_loader)]:
+                    _, _, pred_labels, true_labels, _ = predictor.predict(loader)
+                    cm_path = predictor.create_confusion_matrix(
+                        true_labels, pred_labels, split_name,
+                        model_type='final',
+                        save_dir=self.save_dir,
+                        use_timestamp=False,
+                    )
+                    final_cm_paths[f'{split_name}_cm'] = str(cm_path)
 
             # 最終サマリーをコールバックに通知（confusion matrixのパスも含める）
             final_metrics = {
@@ -403,13 +473,20 @@ class ClassificationTrainer:
                 "final_train_acc": self.history["train_acc"][-1] if self.history["train_acc"] else 0.0,
                 "final_val_loss": self.history["val_loss"][-1] if self.history["val_loss"] else 0.0,
                 "final_val_acc": self.history["val_acc"][-1] if self.history["val_acc"] else 0.0,
-                "test_loss": test_loss,
-                "test_acc": test_acc,
                 "best_val_acc": best_val_acc,
                 "best_epoch": best_epoch,
-                "best_confusion_matrix_paths": best_cm_paths,
-                "final_confusion_matrix_paths": final_cm_paths,
             }
+
+            # test_loaderが存在する場合のみ追加
+            if hasattr(self, 'test_loader') and len(self.test_loader.dataset) > 0:
+                final_metrics["test_loss"] = test_loss
+                final_metrics["test_acc"] = test_acc
+
+            # confusion matrixのパスを追加（存在する場合のみ）
+            if 'best_cm_paths' in locals():
+                final_metrics["best_confusion_matrix_paths"] = best_cm_paths
+            if 'final_cm_paths' in locals():
+                final_metrics["final_confusion_matrix_paths"] = final_cm_paths
             train_end_called = True
             self.runner.call("on_train_end", final_metrics)
 
@@ -531,6 +608,12 @@ def parse_args():
         help="WANDBラン名（デフォルト: None、自動生成）"
     )
     parser.add_argument(
+        "--wandb-group",
+        type=str,
+        default=None,
+        help="WANDBグループ名（Cross ValidationでFoldをまとめる際に使用、デフォルト: None）"
+    )
+    parser.add_argument(
         "--wandb-tags",
         type=str,
         nargs="+",
@@ -541,6 +624,17 @@ def parse_args():
         "--upload-checkpoint",
         action="store_true",
         help="ベストモデルのチェックポイントをWANDBにアップロード（デフォルト: False）"
+    )
+    parser.add_argument(
+        "--use-cv",
+        action="store_true",
+        help="Cross Validationを使用する（デフォルト: False）"
+    )
+    parser.add_argument(
+        "--cv-folds",
+        type=int,
+        default=5,
+        help="Cross ValidationのFold数（デフォルト: 5）"
     )
     return parser.parse_args()
 
@@ -565,10 +659,13 @@ def main():
             seed=args.seed,
             save_dir=args.save_dir,
             log_dir=args.log_dir,
+            use_cv=args.use_cv,
+            cv_folds=args.cv_folds,
             use_wandb=args.use_wandb,
             wandb_project=args.wandb_project,
             wandb_entity=args.wandb_entity,
             wandb_run_name=args.wandb_run_name,
+            wandb_group=args.wandb_group,
             wandb_tags=args.wandb_tags,
             upload_checkpoint=args.upload_checkpoint,
         )
@@ -579,8 +676,19 @@ def main():
             LoggingCallback(logger=logger),
         ]
 
-        trainer = ClassificationTrainer(cfg, logger=logger, callbacks=callbacks)
-        trainer.fit()
+        # Cross Validationを使用する場合
+        if cfg.use_cv:
+            cv_results = run_cross_validation(
+                cfg=cfg,
+                trainer_class=ClassificationTrainer,
+                logger=logger,
+                callbacks=callbacks,
+            )
+            logger.info("Cross Validationが完了しました")
+        else:
+            # 通常の学習
+            trainer = ClassificationTrainer(cfg, logger=logger, callbacks=callbacks)
+            trainer.fit()
     except Exception as e:
         logger.exception("学習中にエラーが発生しました:")
         raise

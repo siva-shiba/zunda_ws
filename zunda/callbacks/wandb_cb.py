@@ -114,19 +114,26 @@ class WandbCallback(Callback):
 
             # WANDBを初期化
             wandb_mode = os.environ.get("WANDB_MODE", "online")
-            self.wandb_run = wandb.init(
-                project=self.cfg.wandb_project,
-                entity=self.cfg.wandb_entity,
-                name=self.cfg.wandb_run_name,
-                tags=self.cfg.wandb_tags if self.cfg.wandb_tags else None,
-                config=config,
-                mode=wandb_mode,
-            )
+            init_kwargs = {
+                "project": self.cfg.wandb_project,
+                "entity": self.cfg.wandb_entity,
+                "name": self.cfg.wandb_run_name,
+                "tags": self.cfg.wandb_tags if self.cfg.wandb_tags else None,
+                "config": config,
+                "mode": wandb_mode,
+            }
+            # groupが指定されている場合は追加
+            if hasattr(self.cfg, 'wandb_group') and self.cfg.wandb_group:
+                init_kwargs["group"] = self.cfg.wandb_group
+
+            self.wandb_run = wandb.init(**init_kwargs)
 
             if self.wandb_run is not None:
                 self.logger.info(f"WANDB初期化完了: {self.wandb_run.url}")
                 self.logger.info(f"WANDB Run ID: {self.wandb_run.id}")
                 self.logger.info(f"WANDB Run Name: {self.wandb_run.name}")
+                if hasattr(self.cfg, 'wandb_group') and self.cfg.wandb_group:
+                    self.logger.info(f"WANDB Group: {self.cfg.wandb_group}")
 
         except Exception as e:
             self.logger.warning(f"WANDBの初期化に失敗しました: {e}")
