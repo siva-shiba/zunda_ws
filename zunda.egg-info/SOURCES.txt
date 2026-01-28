@@ -7,3 +7,7 @@ zunda.egg-info/SOURCES.txt
 zunda.egg-info/dependency_links.txt
 zunda.egg-info/requires.txt
 zunda.egg-info/top_level.txt
+zunda/callbacks/__init__.py
+zunda/callbacks/base.py
+zunda/callbacks/logging_cb.py
+zunda/callbacks/wandb_cb.py

@@ -10,7 +10,7 @@ RUN apt update && \
 
 # pip install
 RUN pip install --upgrade pip
-RUN pip install neptune wandb
+RUN pip install neptune wandb scikit-learn seaborn
 
 # openmim & openmmlab 関連のインストール
 RUN pip install openmim
