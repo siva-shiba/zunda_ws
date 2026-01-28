@@ -14,6 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision import transforms
+import numpy as np
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent.parent
@@ -23,6 +24,7 @@ if str(project_root) not in sys.path:
 from zunda import TouhokuProjectClassificationDataset
 from zunda.callbacks import Callback, CallbackRunner, LoggingCallback, WandbCallback
 from model import SimpleMLP
+from predictor import Predictor
 
 
 def setup_logging(log_dir: str, log_level: str = "INFO") -> logging.Logger:
@@ -196,6 +198,7 @@ class ClassificationTrainer:
         preds = logits.argmax(dim=1)
         return (preds == labels).float().mean().item()
 
+
     def _train_one_epoch(self, epoch: int) -> Tuple[float, float]:
         """1エポックの学習."""
         self.model.train()
@@ -349,7 +352,52 @@ class ClassificationTrainer:
             }
             self.runner.call("on_eval_end", self.cfg.epochs + 1, test_metrics)
 
-            # 最終サマリーをコールバックに通知（LoggingCallbackで使用）
+            # 学習終了後、confusion matrixを生成（ベストモデルと最終モデルの両方）
+            self.logger.info("学習終了後、confusion matrixを生成中...")
+
+            # Predictorを作成
+            predictor = Predictor(
+                model=self.model,
+                device=self.device,
+                class_to_idx=self.class_to_idx,
+                idx_to_class=self.idx_to_class,
+                logger=self.logger,
+            )
+
+            # ベストモデルでconfusion matrixを生成
+            best_cm_paths = {}
+            best_checkpoint_path = self.save_dir / 'best_model.pt'
+            if best_checkpoint_path.exists():
+                self.logger.info("ベストモデルでconfusion matrixを生成中...")
+                best_checkpoint = torch.load(best_checkpoint_path, map_location=self.device)
+                self.model.load_state_dict(best_checkpoint['model_state_dict'])
+
+                for split_name, loader in [('train', self.train_loader), ('val', self.val_loader), ('test', self.test_loader)]:
+                    _, _, pred_labels, true_labels, _ = predictor.predict(loader)
+                    cm_path = predictor.create_confusion_matrix(
+                        true_labels, pred_labels, split_name,
+                        model_type='best',
+                        save_dir=self.save_dir,
+                        use_timestamp=False,
+                    )
+                    best_cm_paths[f'{split_name}_cm'] = str(cm_path)
+
+            # 最終モデルでconfusion matrixを生成
+            self.logger.info("最終モデルでconfusion matrixを生成中...")
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+
+            final_cm_paths = {}
+            for split_name, loader in [('train', self.train_loader), ('val', self.val_loader), ('test', self.test_loader)]:
+                _, _, pred_labels, true_labels, _ = predictor.predict(loader)
+                cm_path = predictor.create_confusion_matrix(
+                    true_labels, pred_labels, split_name,
+                    model_type='final',
+                    save_dir=self.save_dir,
+                    use_timestamp=False,
+                )
+                final_cm_paths[f'{split_name}_cm'] = str(cm_path)
+
+            # 最終サマリーをコールバックに通知（confusion matrixのパスも含める）
             final_metrics = {
                 "final_train_loss": self.history["train_loss"][-1] if self.history["train_loss"] else 0.0,
                 "final_train_acc": self.history["train_acc"][-1] if self.history["train_acc"] else 0.0,
@@ -359,6 +407,8 @@ class ClassificationTrainer:
                 "test_acc": test_acc,
                 "best_val_acc": best_val_acc,
                 "best_epoch": best_epoch,
+                "best_confusion_matrix_paths": best_cm_paths,
+                "final_confusion_matrix_paths": final_cm_paths,
             }
             train_end_called = True
             self.runner.call("on_train_end", final_metrics)

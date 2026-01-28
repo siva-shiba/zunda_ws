@@ -187,17 +187,49 @@ class WandbCallback(Callback):
 
         try:
             if metrics:
+                # サマリーを更新
                 wandb.summary.update({
                     "best_val_acc": metrics.get("best_val_acc", 0.0),
                     "best_epoch": metrics.get("best_epoch", 0),
                     "test_acc": metrics.get("test_acc", 0.0),
                     "test_loss": metrics.get("test_loss", 0.0),
                 })
+
+                # confusion matrixを送信
+                best_cm_paths = metrics.get("best_confusion_matrix_paths", {})
+                if best_cm_paths:
+                    self._log_confusion_matrix_to_wandb(best_cm_paths, 'best')
+
+                final_cm_paths = metrics.get("final_confusion_matrix_paths", {})
+                if final_cm_paths:
+                    self._log_confusion_matrix_to_wandb(final_cm_paths, 'final')
+
             wandb.finish()
             self._finished = True
             self.logger.info("WANDBを終了しました")
         except Exception as e:
             self.logger.error(f"WANDBの終了処理中にエラーが発生しました: {e}")
+
+    def _log_confusion_matrix_to_wandb(self, cm_paths: Dict[str, str], model_type: str) -> None:
+        """混同行列をWANDBに送信（内部メソッド）.
+
+        Args:
+            cm_paths: 混同行列画像のパスの辞書（キー: 'train_cm', 'val_cm', 'test_cm'、値: パス文字列）
+            model_type: モデルの種類（'best'または'final'）
+        """
+        if not self.wandb_run:
+            return
+
+        try:
+            for key, cm_path_str in cm_paths.items():
+                cm_path = Path(cm_path_str)
+                if cm_path.exists():
+                    # wandb.Imageで画像を送信
+                    image = wandb.Image(str(cm_path))
+                    wandb.log({f"{model_type}/{key}": image})
+                    self.logger.info(f"WANDBに混同行列を送信: {key} ({model_type})")
+        except Exception as e:
+            self.logger.error(f"WANDBへの混同行列送信中にエラーが発生しました: {e}")
 
     def on_exception(self, exc: Exception) -> None:
         """例外発生時にWANDBを終了."""
