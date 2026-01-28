@@ -3,12 +3,11 @@
 /data/*
 !/data/.gitkeep
 
-/work_dirs/*
-!/work_dirs/.gitkeep
-
-
 .token
 .wandb
-.wandb_config/
 
+wandb/
+results/
+
+*.log
 *.pt
