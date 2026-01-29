@@ -1,7 +1,7 @@
 """学習コールバックの基底クラスとランナー."""
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, List
 
 
 class Callback:
@@ -31,39 +31,36 @@ class Callback:
         """
         pass
 
-    def on_train_batch_end(self, step: int, metrics: Dict[str, float]) -> None:
+    def on_train_batch_end(self, trainer: Any) -> None:
         """1バッチの学習終了時に呼ばれる.
 
         Args:
-            step: グローバルステップ数
-            metrics: メトリクス辞書（例: {"train/loss": 0.5, "train/acc": 0.8}）
+            trainer: Trainerインスタンス（trainer.metricsからメトリクスを取得）
         """
         pass
 
-    def on_eval_end(self, epoch: int, metrics: Dict[str, float]) -> None:
+    def on_eval_end(self, trainer: Any) -> None:
         """評価終了時に呼ばれる.
 
         Args:
-            epoch: エポック番号
-            metrics: 評価メトリクス辞書（例: {"eval/loss": 0.4, "eval/acc": 0.85}）
+            trainer: Trainerインスタンス（trainer.metricsからメトリクスを取得）
         """
         pass
 
-    def on_epoch_end(self, epoch: int, metrics: Dict[str, float], checkpoint_saved: bool = False) -> None:
+    def on_epoch_end(self, trainer: Any, checkpoint_saved: bool = False) -> None:
         """エポック終了時に呼ばれる.
 
         Args:
-            epoch: エポック番号
-            metrics: エポック全体のメトリクス辞書（train+eval統合）
+            trainer: Trainerインスタンス（trainer.metricsからメトリクスを取得）
             checkpoint_saved: ベストモデルが保存されたかどうか
         """
         pass
 
-    def on_train_end(self, metrics: Dict[str, float] = None) -> None:
+    def on_train_end(self, trainer: Any) -> None:
         """学習終了時に呼ばれる.
 
         Args:
-            metrics: 最終メトリクス辞書（オプション）
+            trainer: Trainerインスタンス（trainer.metricsからメトリクスを取得）
         """
         pass
 

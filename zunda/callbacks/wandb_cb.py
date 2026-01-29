@@ -140,46 +140,44 @@ class WandbCallback(Callback):
             self.logger.exception(e)
             self.wandb_run = None
 
-    def on_train_batch_end(self, step: int, metrics: Dict[str, float]) -> None:
+    def on_train_batch_end(self, trainer: Any) -> None:
         """バッチ終了時にWANDBにログ（現在は使用していない）."""
         pass
 
-    def on_eval_end(self, epoch: int, metrics: Dict[str, float]) -> None:
+    def on_eval_end(self, trainer: Any) -> None:
         """評価終了時にWANDBにログ."""
-        if not self.wandb_run or "test/loss" not in metrics:
+        if not self.wandb_run:
             return
 
         try:
-            wandb.log(metrics)
-            wandb.summary.update({
-                "best_val_acc": metrics.get("best_val_acc", 0.0),
-                "best_epoch": metrics.get("best_epoch", 0),
-                "test_acc": metrics.get("test/acc", 0.0),
-                "test_loss": metrics.get("test/loss", 0.0),
-            })
+            epoch = trainer.metrics.get("epoch", 0)
+            wandb.log(trainer.metrics, step=epoch)
         except Exception as e:
             self.logger.error(f"WANDBへのログ記録中にエラーが発生しました: {e}")
 
-    def on_epoch_end(self, epoch: int, metrics: Dict[str, float], checkpoint_saved: bool = False) -> None:
+    def on_epoch_end(self, trainer: Any, checkpoint_saved: bool = False) -> None:
         """エポック終了時にWANDBにログ."""
         if not self.wandb_run:
             return
 
         try:
+            epoch = trainer.metrics.get("epoch", 0)
             epoch_metrics = {
                 "epoch": epoch,
-                "train/loss": metrics.get("train/loss", 0.0),
-                "train/acc": metrics.get("train/acc", 0.0),
-                "eval/loss": metrics.get("eval/loss", 0.0),
-                "eval/acc": metrics.get("eval/acc", 0.0),
+                "train/loss": trainer.metrics.get("train/loss", 0.0),
+                "train/acc": trainer.metrics.get("train/acc", 0.0),
+                "eval/loss": trainer.metrics.get("eval/loss", 0.0),
+                "eval/acc": trainer.metrics.get("eval/acc", 0.0),
             }
-            wandb.log(epoch_metrics)
+            wandb.log(epoch_metrics, step=epoch)
 
-            if checkpoint_saved and "best_val_acc" in metrics:
-                wandb.log({
-                    "best_val_acc": metrics["best_val_acc"],
-                    "best_epoch": metrics.get("best_epoch", epoch)
-                })
+            if checkpoint_saved and "best_val_acc" in trainer.metrics:
+                best_metrics = {
+                    "best_val_acc": trainer.metrics["best_val_acc"],
+                    "best_epoch": trainer.metrics.get("best_epoch", epoch)
+                }
+                wandb.log(best_metrics, step=epoch)
+
                 if self.cfg.upload_checkpoint:
                     checkpoint_path = Path(self.cfg.save_dir) / 'best_model.pt'
                     if checkpoint_path.exists():
@@ -187,29 +185,19 @@ class WandbCallback(Callback):
         except Exception as e:
             self.logger.error(f"WANDBへのログ記録中にエラーが発生しました: {e}")
 
-    def on_train_end(self, metrics: Dict[str, float] = None) -> None:
+    def on_train_end(self, trainer: Any) -> None:
         """学習終了時にWANDBを終了."""
         if not self.wandb_run or self._finished:
             return
 
         try:
-            if metrics:
-                # サマリーを更新
-                wandb.summary.update({
-                    "best_val_acc": metrics.get("best_val_acc", 0.0),
-                    "best_epoch": metrics.get("best_epoch", 0),
-                    "test_acc": metrics.get("test_acc", 0.0),
-                    "test_loss": metrics.get("test_loss", 0.0),
-                })
-
-                # confusion matrixを送信
-                best_cm_paths = metrics.get("best_confusion_matrix_paths", {})
-                if best_cm_paths:
-                    self._log_confusion_matrix_to_wandb(best_cm_paths, 'best')
-
-                final_cm_paths = metrics.get("final_confusion_matrix_paths", {})
-                if final_cm_paths:
-                    self._log_confusion_matrix_to_wandb(final_cm_paths, 'final')
+            self._log_plots(trainer.plots)
+            wandb.summary.update({
+                "best_val_acc": trainer.metrics.get("best_val_acc", 0.0),
+                "best_epoch": trainer.metrics.get("best_epoch", 0),
+                "test_acc": trainer.metrics.get("test_acc", 0.0),
+                "test_loss": trainer.metrics.get("test_loss", 0.0),
+            })
 
             wandb.finish()
             self._finished = True
@@ -217,26 +205,36 @@ class WandbCallback(Callback):
         except Exception as e:
             self.logger.error(f"WANDBの終了処理中にエラーが発生しました: {e}")
 
-    def _log_confusion_matrix_to_wandb(self, cm_paths: Dict[str, str], model_type: str) -> None:
-        """混同行列をWANDBに送信（内部メソッド）.
+    def _log_plots(self, plots: Dict[str, Any]) -> None:
+        """plots辞書から可視化データをWANDBに送信.
 
         Args:
-            cm_paths: 混同行列画像のパスの辞書（キー: 'train_cm', 'val_cm', 'test_cm'、値: パス文字列）
-            model_type: モデルの種類（'best'または'final'）
+            plots: Trainerやvalidatorが生成した可視化データの辞書
+                  キーは階層構造（例: 'confusion_matrix/best/train_cm'）
+                  値は画像パス（str）またはwandb.Imageオブジェクト
         """
         if not self.wandb_run:
             return
 
         try:
-            for key, cm_path_str in cm_paths.items():
-                cm_path = Path(cm_path_str)
-                if cm_path.exists():
-                    # wandb.Imageで画像を送信
-                    image = wandb.Image(str(cm_path))
-                    wandb.log({f"{model_type}/{key}": image})
-                    self.logger.info(f"WANDBに混同行列を送信: {key} ({model_type})")
+            for key, value in plots.items():
+                if isinstance(value, str):
+                    # 文字列の場合は画像パスとして扱う
+                    image_path = Path(value)
+                    if image_path.exists() and image_path.suffix.lower() in ['.png', '.jpg', '.jpeg']:
+                        image = wandb.Image(str(image_path))
+                        wandb.log({key: image})
+                        self.logger.info(f"WANDBに画像を送信: {key}")
+                    else:
+                        self.logger.warning(f"画像ファイルが見つかりません: {value}")
+                elif hasattr(value, '__class__') and 'Image' in str(type(value)):
+                    # 既にwandb.Imageオブジェクトの場合
+                    wandb.log({key: value})
+                    self.logger.info(f"WANDBに画像を送信: {key}")
+                else:
+                    self.logger.warning(f"未対応のplots値の型: {type(value)} (key: {key})")
         except Exception as e:
-            self.logger.error(f"WANDBへの混同行列送信中にエラーが発生しました: {e}")
+            self.logger.error(f"WANDBへのplots送信中にエラーが発生しました: {e}")
 
     def on_exception(self, exc: Exception) -> None:
         """例外発生時にWANDBを終了."""

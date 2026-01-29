@@ -2,7 +2,7 @@
 
 import logging
 import torch.nn as nn
-from typing import Any, Dict
+from typing import Any
 
 from .base import Callback
 
@@ -101,8 +101,11 @@ class LoggingCallback(Callback):
         """エポック開始時のログ（必要に応じてオーバーライド）."""
         pass
 
-    def on_epoch_end(self, epoch: int, metrics: Dict[str, float], checkpoint_saved: bool = False) -> None:
+    def on_epoch_end(self, trainer: Any, checkpoint_saved: bool = False) -> None:
         """エポック終了時のログ."""
+
+        metrics = trainer.metrics
+        epoch = metrics.get("epoch", 0)
         train_loss = metrics.get("train/loss", 0.0)
         train_acc = metrics.get("train/acc", 0.0)
         val_loss = metrics.get("eval/loss", 0.0)
@@ -123,34 +126,33 @@ class LoggingCallback(Callback):
 
         self.logger.info(log_msg)
 
-    def on_train_end(self, metrics: Dict[str, float] = None) -> None:
+    def on_train_end(self, trainer: Any) -> None:
         """学習終了時のログ."""
         self.logger.info("学習完了!")
+        metrics = trainer.metrics
+        best_val_acc = metrics.get("best_val_acc", 0.0)
+        best_epoch = metrics.get("best_epoch", 0)
+        test_loss = metrics.get("test_loss", 0.0)
+        test_acc = metrics.get("test_acc", 0.0)
 
-        if metrics:
-            best_val_acc = metrics.get("best_val_acc", 0.0)
-            best_epoch = metrics.get("best_epoch", 0)
-            test_loss = metrics.get("test_loss", 0.0)
-            test_acc = metrics.get("test_acc", 0.0)
+        self.logger.info(f"ベスト検証精度: {best_val_acc:.4f} (Epoch {best_epoch})")
 
-            self.logger.info(f"ベスト検証精度: {best_val_acc:.4f} (Epoch {best_epoch})")
-
-            # 最終サマリー
-            self.logger.info("=" * 60)
-            self.logger.info("学習結果サマリー")
-            self.logger.info("=" * 60)
-            if "final_train_loss" in metrics:
-                self.logger.info(
-                    f"最終エポック - Train Loss: {metrics['final_train_loss']:.4f}, "
-                    f"Train Acc: {metrics['final_train_acc']:.4f}"
-                )
-                self.logger.info(
-                    f"最終エポック - Val Loss: {metrics['final_val_loss']:.4f}, "
-                    f"Val Acc: {metrics['final_val_acc']:.4f}"
-                )
-            self.logger.info(f"テスト - Loss: {test_loss:.4f}, Acc: {test_acc:.4f}")
-            self.logger.info(f"ベスト検証精度: {best_val_acc:.4f} (Epoch {best_epoch})")
-            self.logger.info("=" * 60)
+        # 最終サマリー
+        self.logger.info("=" * 60)
+        self.logger.info("学習結果サマリー")
+        self.logger.info("=" * 60)
+        if "final_train_loss" in metrics:
+            self.logger.info(
+                f"最終エポック - Train Loss: {metrics['final_train_loss']:.4f}, "
+                f"Train Acc: {metrics['final_train_acc']:.4f}"
+            )
+            self.logger.info(
+                f"最終エポック - Val Loss: {metrics['final_val_loss']:.4f}, "
+                f"Val Acc: {metrics['final_val_acc']:.4f}"
+            )
+        self.logger.info(f"テスト - Loss: {test_loss:.4f}, Acc: {test_acc:.4f}")
+        self.logger.info(f"ベスト検証精度: {best_val_acc:.4f} (Epoch {best_epoch})")
+        self.logger.info("=" * 60)
 
     def on_exception(self, exc: Exception) -> None:
         """例外発生時のログ."""

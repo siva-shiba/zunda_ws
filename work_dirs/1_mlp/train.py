@@ -165,6 +165,9 @@ class ClassificationTrainer:
         # グローバルステップカウンター
         self.global_step = 0
 
+        self.plots = {}
+        self.metrics = {}
+
         # Callbackのon_initを呼ぶ（初期化処理をCallbackに委譲）
         self.runner.call("on_init", self)
 
@@ -248,10 +251,12 @@ class ClassificationTrainer:
 
             # バッチ終了時のコールバック
             self.global_step += 1
-            self.runner.call("on_train_batch_end", self.global_step, {
+            self.metrics.update({
+                "step": self.global_step,
                 "train/loss": batch_loss,
                 "train/acc": batch_acc,
             })
+            self.runner.call("on_train_batch_end", self)
 
         avg_loss = total_loss / n_samples
         avg_acc = total_acc / n_samples
@@ -307,22 +312,25 @@ class ClassificationTrainer:
                 self.history["val_loss"].append(val_loss)
                 self.history["val_acc"].append(val_acc)
 
-                # 評価終了時のコールバック
-                eval_metrics = {
+                # 評価終了時のコールバック（metricsを更新してから呼ぶ）
+                self.metrics.update({
+                    "epoch": epoch,
                     "eval/loss": val_loss,
                     "eval/acc": val_acc,
-                }
-                self.runner.call("on_eval_end", epoch, eval_metrics)
+                })
+                self.runner.call("on_eval_end", self)
 
-                # エポック終了時のコールバック
-                epoch_metrics = {
+                # エポック終了時のコールバック（metricsを更新してから呼ぶ）
+                self.metrics.update({
+                    "epoch": epoch,
                     "train/loss": train_loss,
                     "train/acc": train_acc,
                     "eval/loss": val_loss,
                     "eval/acc": val_acc,
-                }
+                })
 
                 # ベストモデルを保存
+                checkpoint_saved = False
                 if val_acc > best_val_acc:
                     best_val_acc = val_acc
                     best_epoch = epoch
@@ -336,16 +344,14 @@ class ClassificationTrainer:
                     }
                     checkpoint_path = self.save_dir / 'best_model.pt'
                     torch.save(checkpoint, checkpoint_path)
-                    epoch_metrics["best_val_acc"] = best_val_acc
-                    epoch_metrics["best_epoch"] = best_epoch
+                    self.metrics["best_val_acc"] = best_val_acc
+                    self.metrics["best_epoch"] = best_epoch
                     checkpoint_saved = True
                     # 履歴を更新
                     self.history["best_val_acc"] = best_val_acc
                     self.history["best_epoch"] = best_epoch
-                else:
-                    checkpoint_saved = False
 
-                self.runner.call("on_epoch_end", epoch, epoch_metrics, checkpoint_saved=checkpoint_saved)
+                self.runner.call("on_epoch_end", self, checkpoint_saved=checkpoint_saved)
 
             # 最終モデルを保存
             checkpoint = {
@@ -366,14 +372,14 @@ class ClassificationTrainer:
                 test_loss, test_acc = self._evaluate(self.test_loader)
                 self.logger.info(f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.4f}")
 
-                # テスト結果をコールバックに通知
-                test_metrics = {
+                self.metrics.update({
+                    "epoch": self.cfg.epochs + 1,
                     "test/loss": test_loss,
                     "test/acc": test_acc,
                     "best_val_acc": best_val_acc,
                     "best_epoch": best_epoch,
-                }
-                self.runner.call("on_eval_end", self.cfg.epochs + 1, test_metrics)
+                })
+                self.runner.call("on_eval_end", self)
 
             # 学習終了後、confusion matrixを生成（ベストモデルと最終モデルの両方）
             # CVの場合はtest_loaderが空なのでスキップ
@@ -406,6 +412,7 @@ class ClassificationTrainer:
                             use_timestamp=False,
                         )
                         best_cm_paths[f'{split_name}_cm'] = str(cm_path)
+                        self.plots[f'confusion_matrix/best/{split_name}_cm'] = str(cm_path)
 
                 # 最終モデルでconfusion matrixを生成
                 self.logger.info("最終モデルでconfusion matrixを生成中...")
@@ -421,6 +428,7 @@ class ClassificationTrainer:
                         use_timestamp=False,
                     )
                     final_cm_paths[f'{split_name}_cm'] = str(cm_path)
+                    self.plots[f'confusion_matrix/final/{split_name}_cm'] = str(cm_path)
             else:
                 # CVの場合はtrain/valのみ
                 self.logger.info("学習終了後、confusion matrixを生成中...")
@@ -451,6 +459,7 @@ class ClassificationTrainer:
                             use_timestamp=False,
                         )
                         best_cm_paths[f'{split_name}_cm'] = str(cm_path)
+                        self.plots[f'confusion_matrix/best/{split_name}_cm'] = str(cm_path)
 
                 # 最終モデルでconfusion matrixを生成
                 self.logger.info("最終モデルでconfusion matrixを生成中...")
@@ -466,36 +475,31 @@ class ClassificationTrainer:
                         use_timestamp=False,
                     )
                     final_cm_paths[f'{split_name}_cm'] = str(cm_path)
+                    self.plots[f'confusion_matrix/final/{split_name}_cm'] = str(cm_path)
 
-            # 最終サマリーをコールバックに通知（confusion matrixのパスも含める）
-            final_metrics = {
+            self.metrics.update({
                 "final_train_loss": self.history["train_loss"][-1] if self.history["train_loss"] else 0.0,
                 "final_train_acc": self.history["train_acc"][-1] if self.history["train_acc"] else 0.0,
                 "final_val_loss": self.history["val_loss"][-1] if self.history["val_loss"] else 0.0,
                 "final_val_acc": self.history["val_acc"][-1] if self.history["val_acc"] else 0.0,
                 "best_val_acc": best_val_acc,
                 "best_epoch": best_epoch,
-            }
+            })
 
             # test_loaderが存在する場合のみ追加
             if hasattr(self, 'test_loader') and len(self.test_loader.dataset) > 0:
-                final_metrics["test_loss"] = test_loss
-                final_metrics["test_acc"] = test_acc
+                self.metrics["test_loss"] = test_loss
+                self.metrics["test_acc"] = test_acc
 
-            # confusion matrixのパスを追加（存在する場合のみ）
-            if 'best_cm_paths' in locals():
-                final_metrics["best_confusion_matrix_paths"] = best_cm_paths
-            if 'final_cm_paths' in locals():
-                final_metrics["final_confusion_matrix_paths"] = final_cm_paths
             train_end_called = True
-            self.runner.call("on_train_end", final_metrics)
+            self.runner.call("on_train_end", self)
 
         except Exception as e:
             self.runner.call("on_exception", e)
             raise
         finally:
             if not train_end_called:
-                self.runner.call("on_train_end")
+                self.runner.call("on_train_end", self)
 
 
 def parse_args():
