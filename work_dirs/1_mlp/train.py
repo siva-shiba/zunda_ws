@@ -1,20 +1,17 @@
 """分類タスク用MLPの学習スクリプト."""
 
 import sys
-import os
 import argparse
 import logging
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Optional, Tuple
 from datetime import datetime
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision import transforms
-import numpy as np
 from sklearn.model_selection import StratifiedKFold
 
 # プロジェクトルートをパスに追加
@@ -24,9 +21,10 @@ if str(project_root) not in sys.path:
 
 from zunda import TouhokuProjectClassificationDataset
 from zunda.callbacks import Callback, CallbackRunner, LoggingCallback, WandbCallback
+from zunda.cross_validation import run_cross_validation
+from zunda.cv_adapters import TouhokuClassificationCVAdapter, create_empty_test_loader
 from model import SimpleMLP
 from predictor import Predictor
-from cross_validation import run_cross_validation
 
 
 def setup_logging(log_dir: str, log_level: str = "INFO") -> logging.Logger:
@@ -96,6 +94,7 @@ class TrainerConfig:
     # Cross Validation設定
     use_cv: bool = False
     cv_folds: int = 5
+    current_fold: Optional[int] = None  # CV時の現在のFold番号（W&Bで識別用）
     # WANDB設定
     use_wandb: bool = True
     wandb_project: str = "mlp"
@@ -119,7 +118,6 @@ class ClassificationTrainer:
         self.runner = CallbackRunner(callbacks or [])
 
         # データローダーを作成（通常学習時のみ）
-        # Cross Validation時は外部でDataLoaderを差し替えるので、ここでは作成しない
         if not self.cfg.use_cv:
             self.train_loader, self.val_loader, self.test_loader, self.class_to_idx, self.idx_to_class = \
                 self._build_dataloaders()
@@ -134,7 +132,7 @@ class ClassificationTrainer:
             self.idx_to_class = temp_dataset.get_idx_to_class()
 
         # モデルを作成
-        input_size = cfg.image_size * cfg.image_size * 3  # RGB画像
+        input_size = cfg.image_size * cfg.image_size * 3
         num_classes = len(self.class_to_idx)
         self.model = SimpleMLP(
             input_size=input_size,
@@ -300,10 +298,8 @@ class ClassificationTrainer:
                 # エポック開始
                 self.runner.call("on_epoch_start", epoch)
 
-                # 学習
+                # 学習 & 検証
                 train_loss, train_acc = self._train_one_epoch(epoch)
-
-                # 検証
                 val_loss, val_acc = self._evaluate(self.val_loader)
 
                 # 履歴を更新
@@ -330,7 +326,7 @@ class ClassificationTrainer:
                 })
 
                 # ベストモデルを保存
-                checkpoint_saved = False
+                ckpt_saved = False
                 if val_acc > best_val_acc:
                     best_val_acc = val_acc
                     best_epoch = epoch
@@ -346,12 +342,12 @@ class ClassificationTrainer:
                     torch.save(checkpoint, checkpoint_path)
                     self.metrics["best_val_acc"] = best_val_acc
                     self.metrics["best_epoch"] = best_epoch
-                    checkpoint_saved = True
+                    ckpt_saved = True
                     # 履歴を更新
                     self.history["best_val_acc"] = best_val_acc
                     self.history["best_epoch"] = best_epoch
 
-                self.runner.call("on_epoch_end", self, checkpoint_saved=checkpoint_saved)
+                self.runner.call("on_epoch_end", self, checkpoint_saved=ckpt_saved)
 
             # 最終モデルを保存
             checkpoint = {
@@ -505,141 +501,48 @@ class ClassificationTrainer:
 def parse_args():
     """コマンドライン引数を解析."""
     parser = argparse.ArgumentParser(description="分類タスク用MLPの学習")
-    parser.add_argument(
-        "data_root",
-        type=str,
-        help="データセットのルートディレクトリパス"
-    )
-    parser.add_argument(
-        "--image-size",
-        type=int,
-        default=256,
-        help="画像サイズ（デフォルト: 256）"
-    )
-    parser.add_argument(
-        "--batch-size",
-        "-b",
-        type=int,
-        default=32,
-        help="バッチサイズ（デフォルト: 32）"
-    )
-    parser.add_argument(
-        "--epochs",
-        "-e",
-        type=int,
-        default=10,
-        help="エポック数（デフォルト: 10）"
-    )
-    parser.add_argument(
-        "--lr",
-        type=float,
-        default=1e-3,
-        help="学習率（デフォルト: 1e-3）"
-    )
-    parser.add_argument(
-        "--hidden-size",
-        type=int,
-        default=512,
-        help="隠れ層のサイズ（デフォルト: 512）"
-    )
-    parser.add_argument(
-        "--num-workers",
-        "-w",
-        type=int,
-        default=4,
-        help="DataLoaderのワーカー数（デフォルト: 4、共有メモリ不足の場合は0を推奨）"
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default=None,
-        help="デバイス（デフォルト: cuda if available else cpu）"
-    )
-    parser.add_argument(
-        "--seed",
-        "-s",
-        type=int,
-        default=42,
-        help="乱数シード（デフォルト: 42）"
-    )
-    parser.add_argument(
-        "--save-dir",
-        type=str,
-        default="./checkpoints",
-        help="チェックポイント保存ディレクトリ（デフォルト: ./checkpoints）"
-    )
-    parser.add_argument(
-        "--log-dir",
-        type=str,
-        default="./logs",
-        help="ログファイル保存ディレクトリ（デフォルト: ./logs）"
-    )
-    parser.add_argument(
-        "--log-level",
-        type=str,
-        default="INFO",
+    parser.add_argument("data_root", help="データセットのルートディレクトリパス")
+    parser.add_argument("--size", default=256, help="画像サイズ（default: 256）")
+    parser.add_argument("--batch", "-b", default=32,
+        help="バッチサイズ（default: 32）")
+    parser.add_argument("--epochs", "-e", default=10,
+        help="エポック数（default: 10）")
+    parser.add_argument("--lr", default=1e-3, help="学習率（デフォルト: 1e-3）")
+    parser.add_argument("--hidden-size", default=512,
+        help="隠れ層のサイズ（default: 512）")
+    parser.add_argument("--num-workers", "-w", default=4,
+        help="DataLoaderのワーカー数（デフォルト: 4、共有メモリ不足の場合は0を推奨）")
+    parser.add_argument("--device", default=None,
+        help="デバイス（デフォルト: cuda if available else cpu）")
+    parser.add_argument("--seed", "-s", default=42,
+        help="乱数シード（default: 42）")
+    parser.add_argument("--save-dir", default="./checkpoints",
+        help="チェックポイント保存ディレクトリ（デフォルト: ./checkpoints）")
+    parser.add_argument("--log-dir", default="./logs",
+        help="ログファイル保存ディレクトリ（デフォルト: ./logs）")
+    parser.add_argument("--log-level", default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="ログレベル（デフォルト: INFO）"
-    )
-    parser.add_argument(
-        "--use-wandb",
-        action="store_true",
-        default=True,
-        help="WANDBを使用する（デフォルト: True）"
-    )
-    parser.add_argument(
-        "--no-wandb",
-        action="store_false",
-        dest="use_wandb",
-        help="WANDBを使用しない"
-    )
-    parser.add_argument(
-        "--wandb-project",
-        type=str,
-        default="mlp",
-        help="WANDBプロジェクト名（デフォルト: zunda-mlp-classification）"
-    )
-    parser.add_argument(
-        "--wandb-entity",
-        type=str,
-        default="zunda",
-        help="WANDBエンティティ名（デフォルト: zunda）"
-    )
-    parser.add_argument(
-        "--wandb-run-name",
-        type=str,
-        default=None,
-        help="WANDBラン名（デフォルト: None、自動生成）"
-    )
-    parser.add_argument(
-        "--wandb-group",
-        type=str,
-        default=None,
-        help="WANDBグループ名（Cross ValidationでFoldをまとめる際に使用、デフォルト: None）"
-    )
-    parser.add_argument(
-        "--wandb-tags",
-        type=str,
-        nargs="+",
-        default=None,
-        help="WANDBタグ（スペース区切りで複数指定可能）"
-    )
-    parser.add_argument(
-        "--upload-checkpoint",
-        action="store_true",
-        help="ベストモデルのチェックポイントをWANDBにアップロード（デフォルト: False）"
-    )
-    parser.add_argument(
-        "--use-cv",
-        action="store_true",
-        help="Cross Validationを使用する（デフォルト: False）"
-    )
-    parser.add_argument(
-        "--cv-folds",
-        type=int,
-        default=5,
-        help="Cross ValidationのFold数（デフォルト: 5）"
-    )
+        help="ログレベル（デフォルト: INFO）")
+    parser.add_argument("--use-wandb", action="store_true", default=True,
+        help="WANDBを使用する（デフォルト: True）")
+    parser.add_argument("--no-wandb", action="store_false", dest="use_wandb",
+        help="WANDBを使用しない")
+    parser.add_argument("--wandb-project", default="mlp",
+        help="WANDBプロジェクト名（デフォルト: zunda-mlp-classification）")
+    parser.add_argument("--wandb-entity", default="zunda",
+        help="WANDBエンティティ名（default: zunda）")
+    parser.add_argument("--wandb-run-name", default=None,
+        help="WANDBラン名（デフォルト: None、自動生成）")
+    parser.add_argument("--wandb-group", default=None,
+        help="WANDBグループ名（デフォルト: None, Cross Validationならtimestamp）")
+    parser.add_argument("--wandb-tags", nargs="+", default=None,
+        help="WANDBタグ（スペース区切りで複数指定可能）")
+    parser.add_argument("--upload-checkpoint", action="store_true",
+        help="ベストモデルのチェックポイントをWANDBにアップロード（デフォルト: False）")
+    parser.add_argument("--use-cv", action="store_true",
+        help="Cross Validationを使用する（デフォルト: False）")
+    parser.add_argument("--cv-folds", default=5,
+        help="Cross ValidationのFold数（デフォルト: 5）")
     return parser.parse_args()
 
 
@@ -653,8 +556,8 @@ def main():
     try:
         cfg = TrainerConfig(
             data_root=args.data_root,
-            image_size=args.image_size,
-            batch_size=args.batch_size,
+            image_size=args.size,
+            batch_size=args.batch,
             epochs=args.epochs,
             lr=args.lr,
             hidden_size=args.hidden_size,
@@ -682,11 +585,13 @@ def main():
 
         # Cross Validationを使用する場合
         if cfg.use_cv:
+            adapter = TouhokuClassificationCVAdapter()
             cv_results = run_cross_validation(
                 cfg=cfg,
                 trainer_class=ClassificationTrainer,
                 logger=logger,
-                callbacks=callbacks,
+                adapter=adapter,
+                create_empty_test_loader=create_empty_test_loader,
             )
             logger.info("Cross Validationが完了しました")
         else:

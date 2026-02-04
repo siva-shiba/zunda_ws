@@ -111,6 +111,9 @@ class WandbCallback(Callback):
                 "frozen_params": total_params - trainable_params,
                 "model_size_mb": total_params * 4 / (1024 ** 2),
             }
+            # Cross Validation時はFold番号をconfigに追加
+            if hasattr(self.cfg, 'current_fold') and self.cfg.current_fold is not None:
+                config["fold"] = self.cfg.current_fold
 
             # WANDBを初期化
             wandb_mode = os.environ.get("WANDB_MODE", "online")
