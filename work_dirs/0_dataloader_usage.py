@@ -95,13 +95,13 @@ def example_train_val_test_split():
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
     ])
-    
+
     val_transform = transforms.Compose([
         transforms.Resize((256, 256)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
     ])
-    
+
     # train/val/testに分割してDataLoaderを作成
     train_loader, val_loader, test_loader = TouhokuProjectDataset.create_train_val_test_dataloaders(
         data_root=str(DATA_ROOT),
@@ -116,17 +116,17 @@ def example_train_val_test_split():
         test_transform=val_transform,
         random_seed=42,  # 再現性のため
     )
-    
+
     print(f"学習データ: {len(train_loader.dataset)} サンプル")
     print(f"検証データ: {len(val_loader.dataset)} サンプル")
     print(f"テストデータ: {len(test_loader.dataset)} サンプル")
-    
+
     # 学習データのバッチを取得
     train_batch = next(iter(train_loader))
     print(f"\n学習バッチ:")
     print(f"  画像形状: {train_batch['image'].shape}")
     print(f"  テキスト数: {len(train_batch['text'])}")
-    
+
     # 検証データのバッチを取得
     val_batch = next(iter(val_loader))
     print(f"\n検証バッチ:")
@@ -140,11 +140,14 @@ def example_classification_dataset():
     dataset = TouhokuProjectClassificationDataset(
         data_root=str(DATA_ROOT),
     )
-    
+
     print(f"データセットサイズ: {len(dataset)}")
     print(f"クラス数: {dataset.num_classes}")
     print(f"クラス一覧: {dataset.get_class_names()}")
-    
+    from collections import Counter
+    count = Counter(dataset.get_class_names()[d["label"]] for d in dataset)
+    print(f"各クラスデータ数: {count}")
+
     # サンプルを取得
     sample = dataset[0]
     print(f"\nサンプル:")
@@ -161,7 +164,7 @@ def example_classification_dataloader():
         transforms.Resize((256, 256)),
         transforms.ToTensor(),
     ])
-    
+
     # DataLoaderを作成
     dataloader, class_to_idx, idx_to_class = TouhokuProjectClassificationDataset.create_classification_dataloader(
         data_root=str(DATA_ROOT),
@@ -170,10 +173,10 @@ def example_classification_dataloader():
         num_workers=2,
         image_transform=image_transform,
     )
-    
+
     print(f"クラス数: {len(class_to_idx)}")
     print(f"クラス名 -> インデックス: {class_to_idx}")
-    
+
     # バッチを取得
     batch = next(iter(dataloader))
     print(f"\nバッチ:")
@@ -192,13 +195,13 @@ def example_classification_train_val_test():
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
     ])
-    
+
     val_transform = transforms.Compose([
         transforms.Resize((256, 256)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
     ])
-    
+
     # train/val/testに分割してDataLoaderを作成
     train_loader, val_loader, test_loader, class_to_idx, idx_to_class = \
         TouhokuProjectClassificationDataset.create_classification_train_val_test_dataloaders(
@@ -214,13 +217,13 @@ def example_classification_train_val_test():
             test_transform=val_transform,
             random_seed=42,
         )
-    
+
     print(f"クラス数: {len(class_to_idx)}")
     print(f"クラス名 -> インデックス: {class_to_idx}")
     print(f"\n学習データ: {len(train_loader.dataset)} サンプル")
     print(f"検証データ: {len(val_loader.dataset)} サンプル")
     print(f"テストデータ: {len(test_loader.dataset)} サンプル")
-    
+
     # 学習データのバッチを取得
     train_batch = next(iter(train_loader))
     print(f"\n学習バッチ:")
@@ -239,15 +242,15 @@ if __name__ == '__main__':
 
     print("\n=== DataLoaderを使用した例 ===")
     example_dataloader()
-    
+
     print("\n=== train/val/testに分割したDataLoaderの使用例 ===")
     example_train_val_test_split()
-    
+
     print("\n=== 分類タスク用データセットの使用例 ===")
     example_classification_dataset()
-    
+
     print("\n=== 分類タスク用DataLoaderの使用例 ===")
     example_classification_dataloader()
-    
+
     print("\n=== 分類タスク用train/val/test分割の使用例 ===")
     example_classification_train_val_test()
