@@ -41,7 +41,11 @@ class TouhokuClassificationCVAdapter:
         self,
         dataset: TouhokuProjectClassificationDataset,
     ) -> Tuple[List[int], List[int]]:
-        """Train/Val用とTest用（unknownクラス）に分割."""
+        """Train/Val用インデックスと除外インデックスを取得.
+
+        除外クラス（unknown等）はtrain/val/testのいずれにも含めない.
+        test_indicesは常に空（CVではtestを使用しない）.
+        """
         train_val_indices = []
         test_indices = []
         unknown_idx = dataset.class_to_idx.get("unknown", None)
@@ -49,7 +53,8 @@ class TouhokuClassificationCVAdapter:
         for i in range(len(dataset)):
             _, _, label_idx = dataset.samples[i]
             if unknown_idx is not None and label_idx == unknown_idx:
-                test_indices.append(i)
+                # 除外クラスはtrain/val/testのいずれにも含めない
+                pass
             else:
                 train_val_indices.append(i)
 

@@ -340,7 +340,7 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
         text_transform: Optional[Callable] = None,
         image_extensions: Optional[List[str]] = None,
         random_seed: Optional[int] = None,
-        exclude_from_train_val: Optional[List[str]] = None,
+        exclude_class: Optional[List[str]] = ["unknown"],
     ) -> Tuple[DataLoader, DataLoader, DataLoader, Dict[str, int], Dict[int, str]]:
         """分類タスク用にデータセットをtrain/val/testに分割してDataLoaderを作成するクラスメソッド.
 
@@ -359,8 +359,8 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
             text_transform: テキストに適用する変換
             image_extensions: 読み込む画像ファイルの拡張子リスト
             random_seed: ランダムシード（再現性のため）
-            exclude_from_train_val: train/valから除外し、testセットのみに含めるクラス名のリスト
-                                  （デフォルト: ["unknown"] - unknownクラスをテストセットのみに含める）
+            exclude_class: train/val/testのいずれにも含めず完全に除外するクラス名のリスト
+                                  （デフォルト: ["unknown"] - unknownクラスを使用しない）
 
         Returns:
             Tuple[DataLoader, DataLoader, DataLoader, Dict[str, int], Dict[int, str]]:
@@ -376,10 +376,6 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
                 f"train_ratio + val_ratio + test_ratio は 1.0 である必要があります。"
                 f"現在の値: {total_ratio}"
             )
-
-        # デフォルトでunknownクラスを除外
-        if exclude_from_train_val is None:
-            exclude_from_train_val = ["unknown"]
 
         # ランダムシードの設定
         if random_seed is not None:
@@ -412,7 +408,7 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
 
         # 除外するクラスのインデックスを取得
         exclude_indices = set()
-        for class_name in exclude_from_train_val:
+        for class_name in exclude_class:
             if class_name in class_to_idx:
                 exclude_indices.add(class_to_idx[class_name])
 
@@ -456,26 +452,6 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
             [train_size, val_size, test_size],
             generator=torch.Generator().manual_seed(random_seed if random_seed is not None else 42)
         )
-
-        # 除外クラスをテストセットに追加
-        if len(exclude_samples) > 0:
-            exclude_dataset = FilteredDataset(full_dataset, exclude_samples)
-            # 既存のテストセットと除外クラスのデータセットを結合
-            class CombinedDataset:
-                def __init__(self, dataset1, dataset2):
-                    self.dataset1 = dataset1
-                    self.dataset2 = dataset2
-
-                def __len__(self):
-                    return len(self.dataset1) + len(self.dataset2)
-
-                def __getitem__(self, idx):
-                    if idx < len(self.dataset1):
-                        return self.dataset1[idx]
-                    else:
-                        return self.dataset2[idx - len(self.dataset1)]
-
-            test_dataset = CombinedDataset(test_dataset, exclude_dataset)
 
         # 各データセットに変換を適用するためのラッパー
         class TransformDataset:
