@@ -1,6 +1,8 @@
 setup.py
 zunda/__init__.py
 zunda/classification.py
+zunda/cross_validation.py
+zunda/cv_adapters.py
 zunda/dataset.py
 zunda.egg-info/PKG-INFO
 zunda.egg-info/SOURCES.txt

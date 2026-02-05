@@ -4,24 +4,17 @@ import sys
 import argparse
 import logging
 from pathlib import Path
-from typing import Dict, List, Tuple
-from datetime import datetime
-import json
+from typing import Dict, Tuple
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision import transforms
 import numpy as np
-from sklearn.metrics import classification_report, confusion_matrix
 
 # 推論スクリプトでもGUIバックエンドを使わない（Tkinterの警告回避）
 import matplotlib
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas as pd
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent.parent
@@ -81,7 +74,9 @@ def load_checkpoint(checkpoint_path: Path, device: torch.device) -> Dict:
 
     logger.info(f"チェックポイントをロード中: {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    logger.info(f"エポック: {checkpoint.get('epoch', 'N/A')}, Val Acc: {checkpoint.get('val_acc', 0.0):.4f}")
+    epoch = checkpoint.get('epoch', None)
+    val_acc = checkpoint.get('val_acc', None)
+    logger.info(f"エポック: {epoch}, Val Acc: {val_acc:.4f}")
 
     return checkpoint
 
@@ -197,8 +192,6 @@ def create_dataloaders(
     logger.info(f"テストデータ: {len(test_loader.dataset)} サンプル")
 
     return train_loader, val_loader, test_loader
-
-
 
 
 def parse_args():
@@ -370,7 +363,7 @@ def main():
         )
 
         # 全体サマリーを表示
-        print("\n" + "="*80)
+        print("="*80)
         print("全体推論結果サマリー")
         print("="*80)
         print(f"学習データ精度: {train_acc:.4f}")
@@ -381,7 +374,7 @@ def main():
         logger.info("推論が完了しました")
 
     except Exception as e:
-        logger.exception("推論中にエラーが発生しました:")
+        logger.exception(f"推論中にエラーが発生しました: {e}")
         raise
 
 

@@ -123,13 +123,13 @@ def example_train_val_test_split():
 
     # 学習データのバッチを取得
     train_batch = next(iter(train_loader))
-    print(f"\n学習バッチ:")
+    print("\n学習バッチ:")
     print(f"  画像形状: {train_batch['image'].shape}")
     print(f"  テキスト数: {len(train_batch['text'])}")
 
     # 検証データのバッチを取得
     val_batch = next(iter(val_loader))
-    print(f"\n検証バッチ:")
+    print("\n検証バッチ:")
     print(f"  画像形状: {val_batch['image'].shape}")
     print(f"  テキスト数: {len(val_batch['text'])}")
 
@@ -150,7 +150,7 @@ def example_classification_dataset():
 
     # サンプルを取得
     sample = dataset[0]
-    print(f"\nサンプル:")
+    print("\nサンプル:")
     print(f"  画像サイズ: {sample['image'].size}")
     print(f"  ラベル: {sample['label']}")
     print(f"  クラス名: {sample['class_name']}")
@@ -179,7 +179,7 @@ def example_classification_dataloader():
 
     # バッチを取得
     batch = next(iter(dataloader))
-    print(f"\nバッチ:")
+    print("\nバッチ:")
     print(f"  画像形状: {batch['image'].shape}")
     print(f"  ラベル形状: {batch['label'].shape}")
     print(f"  ラベル: {batch['label'].tolist()}")
@@ -226,7 +226,7 @@ def example_classification_train_val_test():
 
     # 学習データのバッチを取得
     train_batch = next(iter(train_loader))
-    print(f"\n学習バッチ:")
+    print("\n学習バッチ:")
     print(f"  画像形状: {train_batch['image'].shape}")
     print(f"  ラベル形状: {train_batch['label'].shape}")
     print(f"  ラベル例: {train_batch['label'][:5].tolist()}")

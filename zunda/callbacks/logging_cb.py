@@ -132,8 +132,8 @@ class LoggingCallback(Callback):
         metrics = trainer.metrics
         best_val_acc = metrics.get("best_val_acc", 0.0)
         best_epoch = metrics.get("best_epoch", 0)
-        test_loss = metrics.get("test_loss", 0.0)
-        test_acc = metrics.get("test_acc", 0.0)
+        test_loss = metrics.get("test/loss", 0.0)
+        test_acc = metrics.get("test/acc", 0.0)
 
         self.logger.info(f"ベスト検証精度: {best_val_acc:.4f} (Epoch {best_epoch})")
 

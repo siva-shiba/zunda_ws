@@ -67,9 +67,11 @@ class WandbCallback(Callback):
         self.logger = logger or logging.getLogger(__name__)
         self.wandb_run = None
         self._finished = False
+        self._trainer = None
 
     def on_init(self, trainer: Any) -> None:
         """WANDBを初期化."""
+        self._trainer = trainer
         if not self.cfg.use_wandb:
             return
 
@@ -198,8 +200,8 @@ class WandbCallback(Callback):
             wandb.summary.update({
                 "best_val_acc": trainer.metrics.get("best_val_acc", 0.0),
                 "best_epoch": trainer.metrics.get("best_epoch", 0),
-                "test_acc": trainer.metrics.get("test_acc", 0.0),
-                "test_loss": trainer.metrics.get("test_loss", 0.0),
+                "test_acc": trainer.metrics.get("test/acc", 0.0),
+                "test_loss": trainer.metrics.get("test/loss", 0.0),
             })
 
             wandb.finish()
@@ -241,4 +243,5 @@ class WandbCallback(Callback):
 
     def on_exception(self, exc: Exception) -> None:
         """例外発生時にWANDBを終了."""
-        self.on_train_end()
+        if self._trainer is not None:
+            self.on_train_end(self._trainer)
