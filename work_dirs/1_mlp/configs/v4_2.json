@@ -1,0 +1,18 @@
+{
+  "data_root": "data/touhoku_project_images",
+  "image_size": 256,
+  "batch_size": 32,
+  "epochs": 100,
+  "lr": 0.001,
+  "hidden_size": 512,
+  "seed": 42,
+  "use_wandb": true,
+  "wandb_project": "mlp",
+  "use_cv": false,
+  "cv_folds": 5,
+  "test_eval_interval": null,
+  "use_class_weights": false,
+  "use_weighted_sampler": false,
+  "use_focal_loss": false,
+  "include_classes": ["zunko", "itako", "zundamon", "kiritan"]
+}
