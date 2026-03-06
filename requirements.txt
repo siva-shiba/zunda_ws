@@ -1,0 +1,18 @@
+# PyTorch (Docker ベースイメージと合わせる場合: CUDA 11.8)
+--extra-index-url https://download.pytorch.org/whl/cu118
+torch==2.6.0
+torchvision==0.21.0
+
+# 実験管理・可視化
+neptune
+wandb
+
+# 学習・評価
+scikit-learn
+seaborn
+
+# OpenMMLab（mmcv はソースビルドで CUDA_HOME が必要なため別ファイルで wheel を指定）
+openmim
+mmengine
+mmpretrain
+# mmcv は pip install -r requirements-mmcv.txt でインストール

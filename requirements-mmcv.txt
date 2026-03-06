@@ -1,0 +1,4 @@
+# mmcv は CUDA 拡張のソースビルドを避けるためプレビルド wheel を指定（venv/Docker 共通）
+--only-binary :all:
+--find-links https://download.openmmlab.com/mmcv/dist/cu118/torch2.0.0/index.html
+mmcv==2.2.0

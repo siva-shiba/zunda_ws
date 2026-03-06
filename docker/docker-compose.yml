@@ -1,9 +1,11 @@
 services:
   zunda:
     hostname: zunda
+    network_mode: host
     build:
       context: ../
       dockerfile: ./docker/Dockerfile
+      network: host
       args:
         UID: ${UID:-1000}
         GID: ${GID:-1000}
