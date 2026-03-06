@@ -16,6 +16,8 @@ from sklearn.model_selection import StratifiedKFold
 from torch.utils.data import DataLoader, Dataset, Subset
 from torchvision import transforms
 
+from .data_augmentation import create_weighted_sampler
+
 
 class CVDatasetAdapter(Protocol):
     """Cross Validation用のデータセットアダプタプロトコル.
@@ -66,6 +68,7 @@ def create_cv_dataloaders(
     train_transform: Optional[transforms.Compose] = None,
     val_transform: Optional[transforms.Compose] = None,
     image_key: str = "image",
+    use_weighted_sampler: bool = False,
 ) -> Tuple[DataLoader, DataLoader]:
     """Cross Validation用のDataLoaderを作成.
 
@@ -108,10 +111,17 @@ def create_cv_dataloaders(
     train_dataset = TransformSubset(train_subset, train_transform, image_key)
     val_dataset = TransformSubset(val_subset, val_transform, image_key)
 
+    # Weighted Random Samplerの準備
+    sampler = create_weighted_sampler(
+        train_dataset,
+        use_weighted_sampler=use_weighted_sampler,
+    )
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=True if sampler is None else False,
+        sampler=sampler,
         num_workers=num_workers,
         pin_memory=True,
     )
@@ -133,6 +143,7 @@ def run_cross_validation(
     logger: logging.Logger,
     adapter: CVDatasetAdapter,
     create_empty_test_loader: Optional[Callable[[Any], DataLoader]] = None,
+    build_transforms_func: Optional[Callable[[Any], Tuple[transforms.Compose, transforms.Compose]]] = None,
 ) -> Dict[str, Any]:
     """Cross Validationを実行.
 
@@ -143,6 +154,9 @@ def run_cross_validation(
         adapter: データセット固有の処理を提供するアダプタ
         create_empty_test_loader: 空のtest_loaderを作成する関数（任意）
             引数はcfg、CV時はtest_loaderを使用しない
+        build_transforms_func: transformsを構築する関数（任意）
+            指定されていない場合はadapter.build_transforms()を使用
+            引数はcfg、戻り値は(train_transform, val_transform)
 
     Returns:
         Cross Validationの結果辞書
@@ -212,7 +226,12 @@ def run_cross_validation(
         fold_cfg = type(cfg)(**fold_cfg_dict)
 
         fold_callbacks = adapter.create_fold_callbacks(fold_cfg, logger)
-        train_transform, val_transform = adapter.build_transforms(cfg)
+
+        # transformsを構築（build_transforms_funcが指定されていればそれを使用、なければadapterのメソッドを使用）
+        if build_transforms_func is not None:
+            train_transform, val_transform = build_transforms_func(fold_cfg)
+        else:
+            train_transform, val_transform = adapter.build_transforms(fold_cfg)
 
         train_indices_actual = [train_val_indices[i] for i in train_idx]
         val_indices_actual = [train_val_indices[i] for i in val_idx]
@@ -225,6 +244,7 @@ def run_cross_validation(
             num_workers=cfg.num_workers,
             train_transform=train_transform,
             val_transform=val_transform,
+            use_weighted_sampler=getattr(cfg, 'use_weighted_sampler', False),
         )
 
         n_train = len(train_loader.dataset)

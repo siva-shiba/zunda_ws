@@ -5,6 +5,11 @@ from typing import Optional, List, Callable, Dict, Tuple
 from PIL import Image
 import torch
 from torch.utils.data import Dataset, DataLoader, random_split
+from collections import Counter
+import numpy as np
+from sklearn.model_selection import train_test_split
+
+from .data_augmentation import create_weighted_sampler
 
 from .dataset import TouhokuProjectDataset
 
@@ -341,6 +346,8 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
         image_extensions: Optional[List[str]] = None,
         random_seed: Optional[int] = None,
         exclude_class: Optional[List[str]] = ["unknown"],
+        use_stratified_split: bool = True,
+        use_weighted_sampler: bool = False,
     ) -> Tuple[DataLoader, DataLoader, DataLoader, Dict[str, int], Dict[int, str]]:
         """分類タスク用にデータセットをtrain/val/testに分割してDataLoaderを作成するクラスメソッド.
 
@@ -361,6 +368,8 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
             random_seed: ランダムシード（再現性のため）
             exclude_class: train/val/testのいずれにも含めず完全に除外するクラス名のリスト
                                   （デフォルト: ["unknown"] - unknownクラスを使用しない）
+            use_stratified_split: Stratified Splitを使用するか（クラス比率を保ったまま分割）
+            use_weighted_sampler: Weighted Random Samplerを使用するか（少数クラスを多くサンプリング）
 
         Returns:
             Tuple[DataLoader, DataLoader, DataLoader, Dict[str, int], Dict[int, str]]:
@@ -442,16 +451,66 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
         include_dataset = FilteredDataset(full_dataset, include_samples)
 
         # 除外クラス以外のデータをtrain/val/testに分割
-        dataset_size = len(include_dataset)
-        train_size = int(train_ratio * dataset_size)
-        val_size = int(val_ratio * dataset_size)
-        test_size = dataset_size - train_size - val_size  # 端数処理のため
+        if use_stratified_split:
+            # Stratified Split: クラス比率を保ったまま分割
+            # ラベル取得
+            labels = np.array([sample['label'] for sample in include_dataset])
+            indices = np.arange(len(include_dataset))
 
-        train_dataset, val_dataset, test_dataset = random_split(
-            include_dataset,
-            [train_size, val_size, test_size],
-            generator=torch.Generator().manual_seed(random_seed if random_seed is not None else 42)
-        )
+            # クラスごとのサンプル数をチェック
+            label_counts = Counter(labels)
+            min_samples = min(label_counts.values())
+
+            # trainとtemp（val+test）に分割
+            use_stratify_first = min_samples >= 2
+            train_indices, temp_indices = train_test_split(
+                indices,
+                test_size=(val_ratio + test_ratio),
+                stratify=labels if use_stratify_first else None,
+                random_state=random_seed if random_seed is not None else 42
+            )
+
+            # tempをvalとtestに分割
+            temp_labels = labels[temp_indices]
+            temp_label_counts = Counter(temp_labels)
+            temp_min_samples = min(temp_label_counts.values()) if temp_label_counts else 0
+
+            # val/test分割でもstratifyを使うには、各クラスに最低2サンプル必要
+            use_stratify_second = temp_min_samples >= 2
+            val_indices, test_indices = train_test_split(
+                temp_indices,
+                test_size=test_ratio / (val_ratio + test_ratio),
+                stratify=temp_labels if use_stratify_second else None,
+                random_state=random_seed if random_seed is not None else 42
+            )
+
+            # インデックスからデータセットを作成
+            class StratifiedDataset:
+                def __init__(self, base_dataset, indices):
+                    self.base_dataset = base_dataset
+                    self.indices = indices
+
+                def __len__(self):
+                    return len(self.indices)
+
+                def __getitem__(self, idx):
+                    return self.base_dataset[self.indices[idx]]
+
+            train_dataset = StratifiedDataset(include_dataset, train_indices)
+            val_dataset = StratifiedDataset(include_dataset, val_indices)
+            test_dataset = StratifiedDataset(include_dataset, test_indices)
+        else:
+            # 通常のランダム分割
+            dataset_size = len(include_dataset)
+            train_size = int(train_ratio * dataset_size)
+            val_size = int(val_ratio * dataset_size)
+            test_size = dataset_size - train_size - val_size  # 端数処理のため
+
+            train_dataset, val_dataset, test_dataset = random_split(
+                include_dataset,
+                [train_size, val_size, test_size],
+                generator=torch.Generator().manual_seed(random_seed if random_seed is not None else 42)
+            )
 
         # 各データセットに変換を適用するためのラッパー
         class TransformDataset:
@@ -474,11 +533,21 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
         val_dataset_transformed = TransformDataset(val_dataset, val_transform)
         test_dataset_transformed = TransformDataset(test_dataset, test_transform)
 
+        # Weighted Random Samplerの準備
+        sampler = None
+        if use_weighted_sampler and shuffle_train:
+            sampler = create_weighted_sampler(
+                train_dataset_transformed,
+                use_weighted_sampler=True,
+            )
+            shuffle_train = False  # samplerを使用する場合はshuffleはFalseにする
+
         # DataLoaderを作成
         train_loader = DataLoader(
             train_dataset_transformed,
             batch_size=batch_size,
-            shuffle=shuffle_train,
+            shuffle=shuffle_train if sampler is None else False,
+            sampler=sampler,
             num_workers=num_workers,
             pin_memory=pin_memory,
         )

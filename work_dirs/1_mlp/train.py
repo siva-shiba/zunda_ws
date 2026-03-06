@@ -2,10 +2,12 @@
 
 import sys
 import argparse
+import json
 import logging
 from pathlib import Path
-from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from dataclasses import dataclass, fields, MISSING
+from typing import Dict, Optional, Tuple, Callable, Any
+import typing
 from datetime import datetime
 
 import torch
@@ -14,18 +16,23 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from sklearn.metrics import precision_recall_fscore_support
 import numpy as np
+from collections import Counter
 
-# プロジェクトルートをパスに追加
-project_root = Path(__file__).parent.parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
-
-from zunda import TouhokuProjectClassificationDataset
+from zunda import (
+    TouhokuProjectClassificationDataset,
+    DATASET_REGISTRY,
+    TouhokuDataset,
+)
 from zunda.callbacks import Callback, CallbackRunner, LoggingCallback, WandbCallback
 from zunda.cross_validation import run_cross_validation
 from zunda.cv_adapters import TouhokuClassificationCVAdapter, create_empty_test_loader
 from model import SimpleMLP
 from predictor import Predictor
+
+# プロジェクトルートをパスに追加
+project_root = Path(__file__).parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 
 def setup_logging(log_dir: str, log_level: str = "INFO") -> logging.Logger:
@@ -79,6 +86,8 @@ def setup_logging(log_dir: str, log_level: str = "INFO") -> logging.Logger:
 class TrainerConfig:
     """学習設定."""
     data_root: str
+    dataset: str = "touhoku"
+    in_channels: Optional[int] = None  # Noneのとき dataset から推定 (mnist->1, touhoku->3)
     image_size: int = 256
     batch_size: int = 32
     epochs: int = 10
@@ -99,6 +108,14 @@ class TrainerConfig:
     # テスト評価設定
     test_eval_interval: Optional[int] = None  # テスト評価の実行間隔（エポック数）
     # None: 学習終了時のみ, 1: 毎エポック, N: Nエポックごと
+    # クラス不均衡対策設定
+    use_class_weights: bool = True  # クラス重み付き損失関数を使用するか
+    use_weighted_sampler: bool = False  # Weighted Random Samplerを使用するか
+    use_stratified_split: bool = True  # Stratified Splitを使用するか（クラス比率を保ったまま分割）
+    class_weight_method: str = "balanced"  # クラス重みの計算方法: "balanced", "inverse", "sqrt"
+    use_focal_loss: bool = False  # Focal Lossを使用するか
+    focal_loss_alpha: float = 0.25  # Focal Lossのalphaパラメータ
+    focal_loss_gamma: float = 2.0  # Focal Lossのgammaパラメータ
     # WANDB設定
     use_wandb: bool = True
     wandb_project: str = "mlp"
@@ -112,21 +129,46 @@ class TrainerConfig:
 class ClassificationTrainer:
     """分類タスクの学習クラス."""
 
-    def __init__(self, cfg: TrainerConfig, logger: logging.Logger = None, callbacks: list[Callback] = None):
+    def __init__(
+        self,
+        cfg: TrainerConfig,
+        logger: logging.Logger = None,
+        callbacks: list[Callback] = None,
+        build_transforms_func: Optional[Callable[[TrainerConfig], Tuple[transforms.Compose, transforms.Compose]]] = None,
+    ):
         self.cfg = cfg
         self.device = torch.device(cfg.device)
         self.logger = logger if logger is not None else logging.getLogger(__name__)
         self._set_seed(cfg.seed)
+        self.build_transforms_func = build_transforms_func
+
+        # データセットアダプタを取得
+        if cfg.dataset not in DATASET_REGISTRY:
+            raise ValueError(f"未知のdatasetです: {cfg.dataset}. DATASET_REGISTRY に登録してください。")
+        self.dataset_cls = DATASET_REGISTRY[cfg.dataset]
 
         # Callbackランナーを初期化
         self.runner = CallbackRunner(callbacks or [])
 
         # データローダーを作成（通常学習時のみ）
         if not self.cfg.use_cv:
-            self.train_loader, self.val_loader, self.test_loader, self.class_to_idx, self.idx_to_class = \
-                self._build_dataloaders()
+            (
+                self.train_loader,
+                self.val_loader,
+                self.test_loader,
+                self.class_to_idx,
+                self.idx_to_class,
+            ) = self.dataset_cls.build_dataloaders(
+                cfg=self.cfg,
+                logger=self.logger,
+                build_transforms_func=self.build_transforms_func,
+            )
+            # クラス重みを計算（損失関数用）
+            self.class_weights = self._calculate_class_weights()
         else:
-            # Cross Validation時は、クラス情報だけを取得（データローダーは後で設定される）
+            if self.cfg.dataset != "touhoku":
+                raise ValueError("現在 use_cv がサポートされているのは dataset='touhoku' のみです。")
+            # Cross Validation時は、クラス情報だけを取得
             temp_dataset = TouhokuProjectClassificationDataset(
                 data_root=self.cfg.data_root,
                 transform=None,
@@ -134,9 +176,11 @@ class ClassificationTrainer:
             )
             self.class_to_idx = temp_dataset.get_class_to_idx()
             self.idx_to_class = temp_dataset.get_idx_to_class()
+            self.class_weights = None  # CV時は後で計算
 
         # モデルを作成
-        input_size = cfg.image_size * cfg.image_size * 3
+        in_ch = cfg.in_channels if cfg.in_channels is not None else self.dataset_cls.get_in_channels(cfg)
+        input_size = cfg.image_size * cfg.image_size * in_ch
         num_classes = len(self.class_to_idx)
         self.model = SimpleMLP(
             input_size=input_size,
@@ -147,8 +191,27 @@ class ClassificationTrainer:
         # オプティマイザー
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=cfg.lr)
 
-        # 損失関数
-        self.criterion = nn.CrossEntropyLoss()
+        # 損失関数（クラス重みまたはFocal Lossを適用）
+        if cfg.use_focal_loss:
+            from losses import FocalLoss
+            if cfg.use_class_weights and hasattr(self, 'class_weights') and self.class_weights is not None:
+                self.criterion = FocalLoss(
+                    alpha=cfg.focal_loss_alpha,
+                    gamma=cfg.focal_loss_gamma,
+                    weight=self.class_weights.to(self.device)
+                )
+            else:
+                self.criterion = FocalLoss(
+                    alpha=cfg.focal_loss_alpha,
+                    gamma=cfg.focal_loss_gamma
+                )
+            self.logger.info(f"Focal Lossを使用します (alpha={cfg.focal_loss_alpha}, gamma={cfg.focal_loss_gamma})")
+        elif cfg.use_class_weights and hasattr(self, 'class_weights') and self.class_weights is not None:
+            self.criterion = nn.CrossEntropyLoss(weight=self.class_weights.to(self.device))
+            self.logger.info(f"クラス重み付き損失関数を使用します")
+            self.logger.info(f"クラス重み: {dict(zip(self.idx_to_class.values(), self.class_weights.cpu().numpy()))}")
+        else:
+            self.criterion = nn.CrossEntropyLoss()
 
         # 学習履歴
         self.history = {
@@ -180,42 +243,67 @@ class ClassificationTrainer:
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
-    def _build_dataloaders(self):
-        """データローダーを構築."""
-        # 画像変換を定義
-        train_transform = transforms.Compose([
-            transforms.Resize((self.cfg.image_size, self.cfg.image_size)),
-            transforms.RandomHorizontalFlip(p=0.5),  # データ拡張
-            transforms.ToTensor(),
-        ])
+    def _calculate_class_weights(self) -> Optional[torch.Tensor]:
+        """クラス重みを計算.
 
-        val_transform = transforms.Compose([
-            transforms.Resize((self.cfg.image_size, self.cfg.image_size)),
-            transforms.ToTensor(),
-        ])
+        Returns:
+            クラス重みのテンソル（デバイスはCPU、後でデバイスに移動）
+        """
+        if not self.cfg.use_class_weights:
+            return None
 
-        # train/val/testに分割してDataLoaderを作成
-        train_loader, val_loader, test_loader, class_to_idx, idx_to_class = \
-            TouhokuProjectClassificationDataset.create_classification_train_val_test_dataloaders(
-                data_root=self.cfg.data_root,
-                train_ratio=self.cfg.train_ratio,
-                val_ratio=self.cfg.val_ratio,
-                test_ratio=self.cfg.test_ratio,
-                batch_size=self.cfg.batch_size,
-                shuffle_train=True,
-                num_workers=self.cfg.num_workers,
-                pin_memory=True,
-                train_transform=train_transform,
-                val_transform=val_transform,
-                test_transform=val_transform,
-                random_seed=self.cfg.seed,
-            )
+        # 学習データセットからクラス分布を取得
+        train_dataset = self.train_loader.dataset
+        labels = []
 
-        self.logger.info(f"学習データ: {len(train_loader.dataset)} サンプル")
-        self.logger.info(f"検証データ: {len(val_loader.dataset)} サンプル")
-        self.logger.info(f"テストデータ: {len(test_loader.dataset)} サンプル")
+        # データセットからラベルを収集
+        for idx in range(len(train_dataset)):
+            sample = train_dataset[idx]
+            labels.append(sample['label'])
 
-        return train_loader, val_loader, test_loader, class_to_idx, idx_to_class
+        # クラスごとのサンプル数をカウント
+        class_counts = Counter(labels)
+        num_classes = len(self.class_to_idx)
+
+        # クラス名とサンプル数をログに出力
+        self.logger.info("学習データのクラス分布:")
+        for idx in range(num_classes):
+            class_name = self.idx_to_class[idx]
+            count = class_counts.get(idx, 0)
+            self.logger.info(f"  {class_name}: {count} サンプル")
+
+        # クラス重みを計算
+        if self.cfg.class_weight_method == "balanced":
+            # sklearnのbalanced方式: n_samples / (n_classes * np.bincount(y))
+            total_samples = len(labels)
+            weights = []
+            for idx in range(num_classes):
+                count = class_counts.get(idx, 1)  # 0の場合は1に（ゼロ除算回避）
+                weight = total_samples / (num_classes * count)
+                weights.append(weight)
+        elif self.cfg.class_weight_method == "inverse":
+            # 逆数方式: 1 / count
+            max_count = max(class_counts.values())
+            weights = []
+            for idx in range(num_classes):
+                count = class_counts.get(idx, 1)
+                weight = max_count / count
+                weights.append(weight)
+        elif self.cfg.class_weight_method == "sqrt":
+            # 平方根方式: sqrt(max_count / count)
+            max_count = max(class_counts.values())
+            weights = []
+            for idx in range(num_classes):
+                count = class_counts.get(idx, 1)
+                weight = np.sqrt(max_count / count)
+                weights.append(weight)
+        else:
+            raise ValueError(f"未知のclass_weight_method: {self.cfg.class_weight_method}")
+
+        # テンソルに変換
+        class_weights = torch.tensor(weights, dtype=torch.float32)
+
+        return class_weights
 
     def _calculate_accuracy(self, logits: torch.Tensor, labels: torch.Tensor) -> float:
         """精度を計算.
@@ -667,56 +755,132 @@ class ClassificationTrainer:
                 self.runner.call("on_train_end", self)
 
 
+def load_config(path: Optional[Path]) -> Dict[str, Any]:
+    """設定ファイル（JSON）を読み込む. path が None の場合は空の辞書を返す."""
+    if path is None:
+        return {}
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"設定ファイルが見つかりません: {p}")
+    with open(p, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _parse_override_value(key: str, raw: str, field_type: type) -> Any:
+    """上書き文字列をフィールド型に合わせて変換する."""
+    raw = raw.strip()
+    if raw.lower() in ("none", "null", ""):
+        return None
+    if field_type is bool:
+        return raw.lower() in ("true", "1", "yes")
+    if field_type is int:
+        return int(raw)
+    if field_type is float:
+        return float(raw)
+    if field_type is list or (hasattr(field_type, "__origin__") and getattr(field_type, "__origin__") is list):
+        if raw.startswith("[") and raw.endswith("]"):
+            return [x.strip() for x in raw[1:-1].split(",") if x.strip()]
+        return [x.strip() for x in raw.split(",") if x.strip()]
+    return raw
+
+
+def parse_overrides(override_list: list, config_fields: dict) -> Dict[str, Any]:
+    """-o key=value のリストを辞書に変換する（型を適用）. config_fields は field_name -> type の辞書."""
+    result = {}
+    for item in override_list:
+        if "=" not in item:
+            raise ValueError(f"上書きは key=value 形式で指定してください: {item}")
+        key, _, value = item.partition("=")
+        key = key.strip()
+        if key not in config_fields:
+            raise ValueError(f"未知の設定キー: {key}")
+        result[key] = _parse_override_value(key, value, config_fields[key])
+    return result
+
+
+def config_dict_to_trainer_config(d: Dict[str, Any]) -> TrainerConfig:
+    """辞書とデフォルトをマージして TrainerConfig を構築する."""
+    defaults = {}
+    field_types = {}
+    for f in fields(TrainerConfig):
+        if f.default is not MISSING:
+            defaults[f.name] = f.default
+        elif f.name == "device":
+            defaults[f.name] = "cuda" if torch.cuda.is_available() else "cpu"
+        field_types[f.name] = f.type
+    # Optional[X] -> X に正規化
+    for k, t in list(field_types.items()):
+        if getattr(t, "__origin__", None) is typing.Union and hasattr(t, "__args__"):
+            args = [a for a in t.__args__ if a is not type(None)]
+            if len(args) == 1:
+                field_types[k] = args[0]
+    field_names = {f.name for f in fields(TrainerConfig)}
+    merged = {**defaults, **d}
+    if "data_root" not in merged or merged["data_root"] is None or merged["data_root"] == "":
+        if merged.get("dataset") == "mnist":
+            merged["data_root"] = "data"  # MNISTのダウンロード先デフォルト
+        else:
+            raise ValueError("data_root を設定ファイルまたは -o data_root=... で指定してください")
+    # device の遅延評価
+    if merged.get("device") in (None, "auto", ""):
+        merged["device"] = "cuda" if torch.cuda.is_available() else "cpu"
+    # 型変換（辞書の値が文字列のままの場合）
+    for k in list(merged.keys()):
+        if k not in field_types:
+            continue
+        t = field_types[k]
+        v = merged[k]
+        if v is None:
+            continue
+        if t is bool and isinstance(v, str):
+            merged[k] = v.lower() in ("true", "1", "yes")
+        elif t is int and isinstance(v, (str, float)):
+            merged[k] = int(v)
+        elif t is float and isinstance(v, str):
+            merged[k] = float(v)
+        elif (t is list or getattr(t, "__origin__", None) is list) and isinstance(v, str):
+            merged[k] = [x.strip() for x in v.split(",") if x.strip()]
+    return TrainerConfig(**{k: v for k, v in merged.items() if k in field_names})
+
+
 def parse_args():
-    """コマンドライン引数を解析."""
-    parser = argparse.ArgumentParser(description="分類タスク用MLPの学習")
-    parser.add_argument("data_root", help="データセットのルートディレクトリパス")
-    parser.add_argument("--size", type=int, default=256,
-        help="画像サイズ（default: 256）")
-    parser.add_argument("--batch", "-b", type=int, default=32,
-        help="バッチサイズ（default: 32）")
-    parser.add_argument("--epochs", "-e", type=int, default=10,
-        help="エポック数（default: 10）")
-    parser.add_argument("--lr", type=float, default=1e-3,
-        help="学習率（デフォルト: 1e-3）")
-    parser.add_argument("--hidden-size", type=int, default=512,
-        help="隠れ層のサイズ（default: 512）")
-    parser.add_argument("--num-workers", "-w", type=int, default=4,
-        help="DataLoaderのワーカー数（デフォルト: 4、共有メモリ不足の場合は0を推奨）")
-    parser.add_argument("--device", default=None,
-        help="デバイス（デフォルト: cuda if available else cpu）")
-    parser.add_argument("--seed", "-s", type=int, default=42,
-        help="乱数シード（default: 42）")
-    parser.add_argument("--save-dir", default="./checkpoints",
-        help="チェックポイント保存ディレクトリ（デフォルト: ./checkpoints）")
-    parser.add_argument("--log-dir", default="./logs",
-        help="ログファイル保存ディレクトリ（デフォルト: ./logs）")
-    parser.add_argument("--log-level", default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="ログレベル（デフォルト: INFO）")
-    parser.add_argument("--use-wandb", action="store_true", default=True,
-        help="WANDBを使用する（デフォルト: True）")
-    parser.add_argument("--no-wandb", action="store_false", dest="use_wandb",
-        help="WANDBを使用しない")
-    parser.add_argument("--wandb-project", default="mlp",
-        help="WANDBプロジェクト名（デフォルト: zunda-mlp-classification）")
-    parser.add_argument("--wandb-entity", default="zunda",
-        help="WANDBエンティティ名（default: zunda）")
-    parser.add_argument("--wandb-run-name", default=None,
-        help="WANDBラン名（デフォルト: None、自動生成）")
-    parser.add_argument("--wandb-group", default=None,
-        help="WANDBグループ名（デフォルト: None, Cross Validationならtimestamp）")
-    parser.add_argument("--wandb-tags", nargs="+", default=None,
-        help="WANDBタグ（スペース区切りで複数指定可能）")
-    parser.add_argument("--upload-checkpoint", action="store_true",
-        help="ベストモデルのチェックポイントをWANDBにアップロード（デフォルト: False）")
-    parser.add_argument("--use-cv", action="store_true",
-        help="Cross Validationを使用する（デフォルト: False）")
-    parser.add_argument("--cv-folds", type=int, default=5,
-        help="Cross ValidationのFold数（デフォルト: 5）")
-    parser.add_argument("--test-eval-interval", type=int, default=None,
-        help="テスト評価の実行間隔（エポック数）。None: 学習終了時のみ, 1: 毎エポック, N: Nエポックごと")
+    """コマンドライン引数を解析. 設定ファイルと -o key=value による上書きのみ受け付ける."""
+    parser = argparse.ArgumentParser(
+        description="分類タスク用MLPの学習（設定ファイル + 上書き）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+例:
+  # 設定ファイルのみ
+  python train.py config.json
+
+  # 設定ファイル + 上書き
+  python train.py config.json -o epochs=100 -o lr=0.0005
+
+  # 上書きのみ（data_root は必須）
+  python train.py -o data_root=/ws/data/images -o epochs=50
+"""
+    )
+    parser.add_argument(
+        "config",
+        nargs="?",
+        default=None,
+        help="設定ファイル（JSON）。省略時は全項目を -o またはデフォルトで指定"
+    )
+    parser.add_argument(
+        "-o", "--override",
+        dest="overrides",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="設定の上書き（複数指定可）。例: -o epochs=100 -o use_wandb=false"
+    )
     return parser.parse_args()
+
+
+def build_transforms(cfg: TrainerConfig):
+    """Cross Validation 用の transforms 構築関数（現状 Touhoku のみ想定）."""
+    # CV は Touhoku 前提なので TouhokuDataset のデフォルト transforms を利用
+    return TouhokuDataset.build_default_transforms(cfg)
 
 
 def main():
@@ -724,32 +888,23 @@ def main():
     args = parse_args()
 
     # ロギングを設定
-    logger = setup_logging(args.log_dir, args.log_level)
+    logger = setup_logging("./logs", "INFO")
 
     try:
-        cfg = TrainerConfig(
-            data_root=args.data_root,
-            image_size=args.size,
-            batch_size=args.batch,
-            epochs=args.epochs,
-            lr=args.lr,
-            hidden_size=args.hidden_size,
-            num_workers=args.num_workers,
-            device=args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu"),
-            seed=args.seed,
-            save_dir=args.save_dir,
-            log_dir=args.log_dir,
-            use_cv=args.use_cv,
-            cv_folds=args.cv_folds,
-            use_wandb=args.use_wandb,
-            wandb_project=args.wandb_project,
-            wandb_entity=args.wandb_entity,
-            wandb_run_name=args.wandb_run_name,
-            wandb_group=args.wandb_group,
-            wandb_tags=args.wandb_tags,
-            upload_checkpoint=args.upload_checkpoint,
-            test_eval_interval=args.test_eval_interval,
-        )
+        config_path = Path(args.config) if args.config else None
+        base = load_config(config_path)
+        field_types = {f.name: f.type for f in fields(TrainerConfig)}
+        for k, t in list(field_types.items()):
+            if getattr(t, "__origin__", None) is typing.Union and hasattr(t, "__args__"):
+                non_none = [a for a in t.__args__ if a is not type(None)]
+                if len(non_none) == 1:
+                    field_types[k] = non_none[0]
+        overrides = parse_overrides(args.overrides or [], field_types)
+        cfg = config_dict_to_trainer_config({**base, **overrides})
+
+        data_root_path = Path(cfg.data_root)
+        if not data_root_path.is_absolute():
+            cfg = TrainerConfig(**{**{f.name: getattr(cfg, f.name) for f in fields(TrainerConfig)}, "data_root": str(project_root / cfg.data_root)})
 
         # Callbackを作成
         callbacks = [
@@ -760,17 +915,24 @@ def main():
         # Cross Validationを使用する場合
         if cfg.use_cv:
             adapter = TouhokuClassificationCVAdapter()
+
             cv_results = run_cross_validation(
                 cfg=cfg,
                 trainer_class=ClassificationTrainer,
                 logger=logger,
                 adapter=adapter,
                 create_empty_test_loader=create_empty_test_loader,
+                build_transforms_func=build_transforms,
             )
             logger.info("Cross Validationが完了しました")
         else:
             # 通常の学習
-            trainer = ClassificationTrainer(cfg, logger=logger, callbacks=callbacks)
+            trainer = ClassificationTrainer(
+                cfg,
+                logger=logger,
+                callbacks=callbacks,
+                build_transforms_func=build_transforms,
+            )
             trainer.fit()
     except Exception as e:
         logger.exception("学習中にエラーが発生しました:")

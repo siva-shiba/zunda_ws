@@ -8,7 +8,19 @@ from .cross_validation import (
     create_cv_dataloaders,
     run_cross_validation,
 )
-from .cv_adapters import TouhokuClassificationCVAdapter, create_empty_test_loader
+from .cv_adapters import (
+    TouhokuClassificationCVAdapter,
+    create_empty_test_loader,
+)
+from .dataset_adapters import (
+    BaseDatasetAdapter,
+    DATASET_REGISTRY,
+    DatasetAdapterConfig,
+    ImageLabelDictDataset,
+    MNISTDataset,
+    TouhokuDataset,
+    register_dataset,
+)
 
 __all__ = [
     'TouhokuProjectDataset',
@@ -22,4 +34,11 @@ __all__ = [
     'run_cross_validation',
     'TouhokuClassificationCVAdapter',
     'create_empty_test_loader',
+    'BaseDatasetAdapter',
+    'DatasetAdapterConfig',
+    'DATASET_REGISTRY',
+    'TouhokuDataset',
+    'MNISTDataset',
+    'ImageLabelDictDataset',
+    'register_dataset',
 ]
