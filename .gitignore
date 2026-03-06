@@ -10,6 +10,7 @@
 wandb/
 results/
 checkpoints/
+outputs/
 
 *.log
 *.pt

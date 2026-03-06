@@ -1,5 +1,6 @@
 """分類タスク用MLPの学習スクリプト."""
 
+import os
 import sys
 import argparse
 import json
@@ -48,9 +49,8 @@ def setup_logging(log_dir: str, log_level: str = "INFO") -> logging.Logger:
     log_dir_path = Path(log_dir)
     log_dir_path.mkdir(parents=True, exist_ok=True)
 
-    # ログファイル名（タイムスタンプ付き）
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = log_dir_path / f"train_{timestamp}.log"
+    # 1実行1ファイル
+    log_file = log_dir_path / "train.log"
 
     # ログフォーマット
     log_format = logging.Formatter(
@@ -98,9 +98,12 @@ class TrainerConfig:
     seed: int = 42
     save_dir: str = "./checkpoints"
     log_dir: str = "./logs"
+    results_dir: Optional[str] = None  # None のときは save_dir に混在（後方互換）
     train_ratio: float = 0.7
     val_ratio: float = 0.15
     test_ratio: float = 0.15
+    # 学習対象クラス（None/空なら除外クラス以外をすべて使用、指定時はそのクラスのみ）
+    include_classes: Optional[list] = None
     # Cross Validation設定
     use_cv: bool = False
     cv_folds: int = 5
@@ -226,6 +229,9 @@ class ClassificationTrainer:
         # チェックポイント保存ディレクトリ
         self.save_dir = Path(cfg.save_dir)
         self.save_dir.mkdir(parents=True, exist_ok=True)
+        # 結果（混同行列など）保存ディレクトリ（未指定時は save_dir）
+        self.results_dir = Path(cfg.results_dir) if cfg.results_dir else self.save_dir
+        self.results_dir.mkdir(parents=True, exist_ok=True)
 
         # グローバルステップカウンター
         self.global_step = 0
@@ -666,7 +672,7 @@ class ClassificationTrainer:
                         cm_path = predictor.create_confusion_matrix(
                             true_labels, pred_labels, split_name,
                             model_type='best',
-                            save_dir=self.save_dir,
+                            save_dir=self.results_dir,
                             use_timestamp=False,
                         )
                         best_cm_paths[f'{split_name}_cm'] = str(cm_path)
@@ -682,7 +688,7 @@ class ClassificationTrainer:
                     cm_path = predictor.create_confusion_matrix(
                         true_labels, pred_labels, split_name,
                         model_type='final',
-                        save_dir=self.save_dir,
+                        save_dir=self.results_dir,
                         use_timestamp=False,
                     )
                     final_cm_paths[f'{split_name}_cm'] = str(cm_path)
@@ -713,7 +719,7 @@ class ClassificationTrainer:
                         cm_path = predictor.create_confusion_matrix(
                             true_labels, pred_labels, split_name,
                             model_type='best',
-                            save_dir=self.save_dir,
+                            save_dir=self.results_dir,
                             use_timestamp=False,
                         )
                         best_cm_paths[f'{split_name}_cm'] = str(cm_path)
@@ -729,7 +735,7 @@ class ClassificationTrainer:
                     cm_path = predictor.create_confusion_matrix(
                         true_labels, pred_labels, split_name,
                         model_type='final',
-                        save_dir=self.save_dir,
+                        save_dir=self.results_dir,
                         use_timestamp=False,
                     )
                     final_cm_paths[f'{split_name}_cm'] = str(cm_path)
@@ -887,8 +893,20 @@ def main():
     """メイン関数."""
     args = parse_args()
 
-    # ロギングを設定
-    logger = setup_logging("./logs", "INFO")
+    # 1実行分の出力を outputs/(timestamp)/ に集約
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = Path("outputs") / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "wandb").mkdir(exist_ok=True)
+    (run_dir / "results").mkdir(exist_ok=True)
+    (run_dir / "checkpoints").mkdir(exist_ok=True)
+
+    # wandb の保存先を run_dir 内に固定（ログ・チェックポイントと対応が取れる）
+    os.environ["WANDB_DIR"] = str(run_dir / "wandb")
+
+    # ログは run_dir/train.log に出力
+    logger = setup_logging(str(run_dir), "INFO")
+    logger.info(f"出力ルート: {run_dir.resolve()}")
 
     try:
         config_path = Path(args.config) if args.config else None
@@ -904,7 +922,17 @@ def main():
 
         data_root_path = Path(cfg.data_root)
         if not data_root_path.is_absolute():
-            cfg = TrainerConfig(**{**{f.name: getattr(cfg, f.name) for f in fields(TrainerConfig)}, "data_root": str(project_root / cfg.data_root)})
+            tmp = {f.name: getattr(cfg, f.name) for f in fields(TrainerConfig)}
+            tmp["data_root"] = str(project_root / cfg.data_root)
+            cfg = TrainerConfig(**tmp)
+
+        # 保存先を run_dir 配下に統一
+        cfg_dict = {f.name: getattr(cfg, f.name) for f in fields(TrainerConfig)}
+        cfg_dict["save_dir"] = str(run_dir / "checkpoints")
+        cfg_dict["results_dir"] = str(run_dir / "results")
+        cfg = TrainerConfig(**cfg_dict)
+        if getattr(cfg, "wandb_run_name", None) in (None, ""):
+            cfg.wandb_run_name = f"{cfg.wandb_project}_{cfg.dataset}_{run_id}"
 
         # Callbackを作成
         callbacks = [

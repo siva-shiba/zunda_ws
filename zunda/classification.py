@@ -346,6 +346,7 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
         image_extensions: Optional[List[str]] = None,
         random_seed: Optional[int] = None,
         exclude_class: Optional[List[str]] = ["unknown"],
+        include_class: Optional[List[str]] = None,
         use_stratified_split: bool = True,
         use_weighted_sampler: bool = False,
     ) -> Tuple[DataLoader, DataLoader, DataLoader, Dict[str, int], Dict[int, str]]:
@@ -368,6 +369,7 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
             random_seed: ランダムシード（再現性のため）
             exclude_class: train/val/testのいずれにも含めず完全に除外するクラス名のリスト
                                   （デフォルト: ["unknown"] - unknownクラスを使用しない）
+            include_class: 学習対象とするクラス名のリスト。None/空なら除外クラス以外をすべて使用
             use_stratified_split: Stratified Splitを使用するか（クラス比率を保ったまま分割）
             use_weighted_sampler: Weighted Random Samplerを使用するか（少数クラスを多くサンプリング）
 
@@ -436,19 +438,53 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
         if len(include_samples) == 0:
             raise ValueError("除外クラス以外のデータが存在しません。")
 
+        # 学習対象クラスが指定されている場合はさらにフィルタし、ラベルを 0,1,... に振り直す
+        if include_class:
+            include_indices_set = {
+                class_to_idx[c] for c in include_class if c in class_to_idx
+            }
+            include_samples = [
+                idx for idx in include_samples
+                if full_dataset.samples[idx][2] in include_indices_set
+            ]
+            if len(include_samples) == 0:
+                raise ValueError(
+                    f"include_class に指定したクラスに該当するデータがありません: {include_class}"
+                )
+            # 指定順で class_to_idx / idx_to_class を再定義（ラベルを 0 から連番に）
+            new_class_to_idx = {
+                c: i for i, c in enumerate(include_class) if c in class_to_idx
+            }
+            new_idx_to_class = {i: c for c, i in new_class_to_idx.items()}
+            orig_idx_to_class = idx_to_class
+            class_to_idx = new_class_to_idx
+            idx_to_class = new_idx_to_class
+            old_to_new = {
+                old_idx: new_class_to_idx[orig_idx_to_class[old_idx]]
+                for old_idx in include_indices_set
+            }
+        else:
+            old_to_new = None
+
         # インデックスでサブセットを作成するためのカスタムデータセット
         class FilteredDataset:
-            def __init__(self, base_dataset, indices):
+            def __init__(self, base_dataset, indices, label_map=None):
                 self.base_dataset = base_dataset
                 self.indices = indices
+                self.label_map = label_map  # 旧ラベル -> 新ラベル
 
             def __len__(self):
                 return len(self.indices)
 
             def __getitem__(self, idx):
-                return self.base_dataset[self.indices[idx]]
+                sample = self.base_dataset[self.indices[idx]]
+                if isinstance(sample, dict):
+                    sample = sample.copy()
+                    if self.label_map is not None and "label" in sample:
+                        sample["label"] = self.label_map[sample["label"]]
+                return sample
 
-        include_dataset = FilteredDataset(full_dataset, include_samples)
+        include_dataset = FilteredDataset(full_dataset, include_samples, label_map=old_to_new)
 
         # 除外クラス以外のデータをtrain/val/testに分割
         if use_stratified_split:

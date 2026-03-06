@@ -181,6 +181,8 @@ class TouhokuDataset(BaseDatasetAdapter):
                 val_transform=val_transform,
                 test_transform=val_transform,
                 random_seed=cfg.seed,
+                exclude_class=getattr(cfg, "exclude_class", ["unknown"]),
+                include_class=getattr(cfg, "include_classes", None),
                 use_stratified_split=cfg.use_stratified_split,
                 use_weighted_sampler=cfg.use_weighted_sampler,
             )
