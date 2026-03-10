@@ -9,9 +9,11 @@ import sys
 from pathlib import Path
 from collections import Counter
 
+import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import torch
 import matplotlib.font_manager as fm
 
 # 日本語が□にならないようフォントを指定
@@ -40,7 +42,6 @@ def _setup_japanese_font():
 _setup_japanese_font()
 plt.rcParams["axes.unicode_minus"] = False  # マイナス記号の□化を防ぐ
 
-import torch
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent.parent
@@ -122,15 +123,50 @@ def main():
     # 理論値: 各クラスとも 約 n_samples / num_classes
     expected = n_samples / num_classes if num_classes else 0
 
-    fig, ax = plt.subplots(figsize=(max(6, num_classes * 0.4), 5))
-    bars = ax.bar(class_names, counts, color="steelblue", edgecolor="navy", alpha=0.8)
-    ax.axhline(y=expected, color="red", linestyle="--", linewidth=1.5, label=f"期待値 ≈ {expected:.0f}")
+    # クラス重み（config の use_class_weights に応じて1種類だけ計算）
+    use_cw = getattr(cfg, "use_class_weights", True)
+    train_dataset = train_loader.dataset
+    train_labels = [train_dataset[idx]["label"] for idx in range(len(train_dataset))]
+    class_counts_train = Counter(train_labels)
+    method = getattr(cfg, "class_weight_method", "balanced")
 
-    ax.set_xlabel("クラス")
-    ax.set_ylabel("1エポックあたりの使用回数（重複含む）")
-    ax.set_title("重み付きサンプリング時のクラス別使用回数")
-    ax.legend()
-    plt.xticks(rotation=45, ha="right")
+    if use_cw and method == "balanced":
+        total = len(train_labels)
+        class_weights = [total / (num_classes * class_counts_train.get(i, 1)) for i in range(num_classes)]
+    elif use_cw and method == "inverse":
+        max_c = max(class_counts_train.values()) if class_counts_train else 1
+        class_weights = [max_c / class_counts_train.get(i, 1) for i in range(num_classes)]
+    elif use_cw and method == "sqrt":
+        max_c = max(class_counts_train.values()) if class_counts_train else 1
+        class_weights = [np.sqrt(max_c / class_counts_train.get(i, 1)) for i in range(num_classes)]
+    else:
+        class_weights = [1.0] * num_classes
+
+    fig, ax1 = plt.subplots(figsize=(max(6, num_classes * 0.4), 5))
+    x = np.arange(num_classes)
+
+    bars = ax1.bar(x, counts, width=0.6, color="steelblue", edgecolor="navy", alpha=0.8, label="使用回数")
+    ax1.axhline(y=expected, color="red", linestyle="--", linewidth=1.5, label=f"期待値 ≈ {expected:.0f}")
+    ax1.set_xlabel("クラス")
+    ax1.set_ylabel("1エポックあたりの使用回数（重複含む）", color="steelblue")
+    ax1.tick_params(axis="y", labelcolor="steelblue")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(class_names, rotation=45, ha="right")
+
+    ax2 = ax1.twinx()
+    if use_cw:
+        ax2.plot(x, class_weights, color="darkgreen", marker="o", linewidth=2, markersize=8,
+                 label="クラス重み (" + method + ")")
+    else:
+        ax2.plot(x, class_weights, color="gray", marker="s", linewidth=1.5, markersize=6,
+                 label="クラス重みなし (全て1)")
+    ax2.set_ylabel("クラス重み（損失用）", color="darkgreen")
+    ax2.tick_params(axis="y", labelcolor="darkgreen")
+
+    ax1.set_title("使用回数とクラス重み (use_class_weights=" + ("True" if use_cw else "False") + ")")
+    h1, l1 = ax1.get_legend_handles_labels()
+    h2, l2 = ax2.get_legend_handles_labels()
+    fig.legend(h1 + h2, l1 + l2, loc="upper right", bbox_to_anchor=(1.14, 1))
     plt.tight_layout()
 
     out_path = Path(args.out) if args.out else Path("plot_sampler_histogram.png")
@@ -139,9 +175,11 @@ def main():
     plt.close(fig)
 
     logger.info(f"総サンプル数（1エポック）: {n_samples}, クラス数: {num_classes}, 期待値/クラス: {expected:.1f}")
+    logger.info(f"config use_class_weights={use_cw} → クラス重み: {'計算値(' + method + ')' if use_cw else '全て1.0'}")
+    logger.info(f"クラス重み: {dict(zip(class_names, [round(w, 4) for w in class_weights]))}")
     logger.info(f"ヒストグラムを保存しました: {out_path.resolve()}")
     for i, name in enumerate(class_names):
-        logger.info(f"  {name}: {counts[i]} 回")
+        logger.info(f"  {name}: 使用回数={counts[i]}, クラス重み={class_weights[i]:.4f}")
 
 
 if __name__ == "__main__":
