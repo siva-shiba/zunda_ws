@@ -49,4 +49,5 @@ autodoc_mock_imports = [
     "openmim",
     "wandb",
     "neptune",
+    "PIL",
 ]
