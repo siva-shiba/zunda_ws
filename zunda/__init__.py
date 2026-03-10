@@ -21,6 +21,9 @@ from .dataset_adapters import (
     TouhokuDataset,
     register_dataset,
 )
+from .losses import FocalLoss
+from .predictor import ClassificationPredictor
+from .utils import setup_logging
 
 __all__ = [
     'TouhokuProjectDataset',
@@ -41,4 +44,7 @@ __all__ = [
     'MNISTDataset',
     'ImageLabelDictDataset',
     'register_dataset',
+    'FocalLoss',
+    'ClassificationPredictor',
+    'setup_logging',
 ]

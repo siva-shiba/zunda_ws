@@ -1,10 +1,22 @@
 """ロギング用コールバック."""
 
+import dataclasses
 import logging
 import torch.nn as nn
 from typing import Any
 
 from .base import Callback
+
+
+def _config_to_log_items(cfg: Any):
+    """設定オブジェクトを (名前, 値) のイテラブルに変換（dataclass または vars 対応）."""
+    if dataclasses.is_dataclass(cfg):
+        for f in dataclasses.fields(cfg):
+            yield (f.name, getattr(cfg, f.name))
+    else:
+        for k, v in vars(cfg).items():
+            if not k.startswith("_"):
+                yield (k, v)
 
 
 class LoggingCallback(Callback):
@@ -22,19 +34,16 @@ class LoggingCallback(Callback):
         """Trainer生成直後に設定をログ出力."""
         cfg = trainer.cfg
         num_classes = len(trainer.class_to_idx)
+        param_count = sum(p.numel() for p in trainer.model.parameters())
 
         self.logger.info("=" * 60)
         self.logger.info("学習設定")
         self.logger.info("=" * 60)
-        self.logger.info(f"デバイス: {trainer.device}")
-        self.logger.info(f"画像サイズ: {cfg.image_size}")
-        self.logger.info(f"バッチサイズ: {cfg.batch_size}")
-        self.logger.info(f"エポック数: {cfg.epochs}")
-        self.logger.info(f"学習率: {cfg.lr}")
-        self.logger.info(f"隠れ層サイズ: {cfg.hidden_size}")
-        self.logger.info(f"ワーカー数: {cfg.num_workers}")
-        self.logger.info(f"クラス数: {num_classes}")
-        self.logger.info(f"モデルパラメータ数: {sum(p.numel() for p in trainer.model.parameters()):,}")
+        self.logger.info("デバイス: %s", trainer.device)
+        for name, value in _config_to_log_items(cfg):
+            self.logger.info("%s: %s", name, value)
+        self.logger.info("クラス数: %s", num_classes)
+        self.logger.info("モデルパラメータ数: %s", f"{param_count:,}")
         self.logger.info("=" * 60)
 
         # モデル構造を出力

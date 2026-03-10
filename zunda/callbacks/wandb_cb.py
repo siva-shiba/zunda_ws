@@ -1,5 +1,6 @@
 """WANDB用コールバック."""
 
+import dataclasses
 import os
 import logging
 from pathlib import Path
@@ -8,6 +9,15 @@ from typing import Any, Dict, Optional
 import wandb
 
 from .base import Callback
+
+
+def _config_to_dict(cfg: Any) -> Dict[str, Any]:
+    """設定オブジェクトをW&B用の辞書に変換（dataclass の全フィールドを自動列挙）."""
+    if dataclasses.is_dataclass(cfg):
+        return {f.name: getattr(cfg, f.name) for f in dataclasses.fields(cfg)}
+    if hasattr(cfg, "__dict__"):
+        return dict(vars(cfg))
+    return {}
 
 
 def load_wandb_api_key(wandb_file: str = ".wandb") -> Optional[str]:
@@ -86,35 +96,20 @@ class WandbCallback(Callback):
                 self.logger.warning("WANDB_API_KEYが設定されていません。.wandbファイルまたは環境変数を設定してください。")
                 return
 
-            # モデル情報を取得
+            # 設定は dataclass の全フィールドをそのまま使用（モデル別の分岐不要）
+            config = dict(_config_to_dict(self.cfg))
             num_classes = len(trainer.class_to_idx)
-            input_size = self.cfg.image_size * self.cfg.image_size * 3
             total_params = sum(p.numel() for p in trainer.model.parameters())
-            trainable_params = sum(p.numel() for p in trainer.model.parameters() if p.requires_grad)
-            model_str = str(trainer.model)
-
-            config = {
-                "image_size": self.cfg.image_size,
-                "batch_size": self.cfg.batch_size,
-                "epochs": self.cfg.epochs,
-                "lr": self.cfg.lr,
-                "hidden_size": self.cfg.hidden_size,
-                "num_workers": self.cfg.num_workers,
-                "seed": self.cfg.seed,
-                "train_ratio": self.cfg.train_ratio,
-                "val_ratio": self.cfg.val_ratio,
-                "test_ratio": self.cfg.test_ratio,
-                "num_classes": num_classes,
-                "input_size": input_size,
-                "device": str(self.cfg.device),
-                "model_architecture": model_str,
-                "total_params": total_params,
-                "trainable_params": trainable_params,
-                "frozen_params": total_params - trainable_params,
-                "model_size_mb": total_params * 4 / (1024 ** 2),
-            }
-            # Cross Validation時はFold番号をconfigに追加
-            if hasattr(self.cfg, 'current_fold') and self.cfg.current_fold is not None:
+            trainable_params = sum(
+                p.numel() for p in trainer.model.parameters() if p.requires_grad
+            )
+            config["num_classes"] = num_classes
+            config["total_params"] = total_params
+            config["trainable_params"] = trainable_params
+            config["frozen_params"] = total_params - trainable_params
+            config["model_size_mb"] = total_params * 4 / (1024 ** 2)
+            config["model_architecture"] = str(trainer.model)
+            if getattr(self.cfg, "current_fold", None) is not None:
                 config["fold"] = self.cfg.current_fold
 
             # WANDBを初期化

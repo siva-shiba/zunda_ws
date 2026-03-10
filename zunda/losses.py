@@ -45,20 +45,14 @@ class FocalLoss(nn.Module):
         Returns:
             計算された損失値
         """
-        # Cross Entropy Lossを計算
         ce_loss = F.cross_entropy(
             inputs, targets, weight=self.weight, reduction='none'
         )
-
-        # 確率を計算
-        pt = torch.exp(-ce_loss)  # p_t = exp(-CE_loss)
-
-        # Focal Lossを計算: alpha * (1 - p_t)^gamma * CE_loss
+        pt = torch.exp(-ce_loss)
         focal_loss = self.alpha * (1 - pt) ** self.gamma * ce_loss
 
         if self.reduction == 'mean':
             return focal_loss.mean()
         elif self.reduction == 'sum':
             return focal_loss.sum()
-        else:
-            return focal_loss
+        return focal_loss

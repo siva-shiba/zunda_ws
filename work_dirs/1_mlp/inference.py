@@ -21,40 +21,12 @@ project_root = Path(__file__).parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from zunda import TouhokuProjectClassificationDataset
+from zunda import (
+    TouhokuProjectClassificationDataset,
+    setup_logging,
+    ClassificationPredictor,
+)
 from model import SimpleMLP
-from predictor import Predictor
-
-
-def setup_logging(log_level: str = "INFO") -> logging.Logger:
-    """ロギングを設定.
-
-    Args:
-        log_level: ログレベル（DEBUG, INFO, WARNING, ERROR, CRITICAL）
-
-    Returns:
-        設定済みのlogger
-    """
-    # ログフォーマット
-    log_format = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-
-    # ルートロガーを設定
-    logger = logging.getLogger()
-    logger.setLevel(getattr(logging, log_level.upper()))
-
-    # 既存のハンドラーをクリア
-    logger.handlers.clear()
-
-    # コンソールハンドラー（標準出力に出力）
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(getattr(logging, log_level.upper()))
-    console_handler.setFormatter(log_format)
-    logger.addHandler(console_handler)
-
-    return logger
 
 
 def load_checkpoint(checkpoint_path: Path, device: torch.device) -> Dict:
@@ -260,8 +232,7 @@ def main():
     """メイン関数."""
     args = parse_args()
 
-    # ロギングを設定
-    logger = setup_logging(args.log_level)
+    logger = setup_logging(log_dir=None, log_level=args.log_level)
 
     # デバイスを設定
     device = torch.device(args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu"))
@@ -293,8 +264,7 @@ def main():
 
         results_dir = Path(args.results_dir)
 
-        # Predictorを作成
-        predictor = Predictor(
+        predictor = ClassificationPredictor(
             model=model,
             device=device,
             class_to_idx=config['class_to_idx'],

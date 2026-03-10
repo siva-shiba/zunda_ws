@@ -23,12 +23,14 @@ from zunda import (
     TouhokuProjectClassificationDataset,
     DATASET_REGISTRY,
     TouhokuDataset,
+    setup_logging,
+    ClassificationPredictor,
 )
 from zunda.callbacks import Callback, CallbackRunner, LoggingCallback, WandbCallback
 from zunda.cross_validation import run_cross_validation
 from zunda.cv_adapters import TouhokuClassificationCVAdapter, create_empty_test_loader
+from zunda.losses import FocalLoss
 from model import SimpleMLP
-from predictor import Predictor
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent.parent
@@ -36,51 +38,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 
-def setup_logging(log_dir: str, log_level: str = "INFO") -> logging.Logger:
-    """ロギングを設定.
-
-    Args:
-        log_dir: ログファイルを保存するディレクトリ
-        log_level: ログレベル（DEBUG, INFO, WARNING, ERROR, CRITICAL）
-
-    Returns:
-        設定済みのlogger
-    """
-    log_dir_path = Path(log_dir)
-    log_dir_path.mkdir(parents=True, exist_ok=True)
-
-    # 1実行1ファイル
-    log_file = log_dir_path / "train.log"
-
-    # ログフォーマット
-    log_format = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-
-    # ルートロガーを設定
-    logger = logging.getLogger()
-    logger.setLevel(getattr(logging, log_level.upper()))
-
-    # 既存のハンドラーをクリア
-    logger.handlers.clear()
-
-    # ファイルハンドラー（ファイルに出力）
-    file_handler = logging.FileHandler(log_file, encoding='utf-8')
-    file_handler.setLevel(logging.DEBUG)  # ファイルには全ログを記録
-    file_handler.setFormatter(log_format)
-    logger.addHandler(file_handler)
-
-    # コンソールハンドラー（標準出力に出力）
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(getattr(logging, log_level.upper()))
-    console_handler.setFormatter(log_format)
-    logger.addHandler(console_handler)
-
-    logger.info(f"ログファイル: {log_file}")
-
-    return logger
-
+# setup_logging, FocalLoss, ClassificationPredictor は zunda から import 済み
 
 @dataclass
 class TrainerConfig:
@@ -196,7 +154,6 @@ class ClassificationTrainer:
 
         # 損失関数（クラス重みまたはFocal Lossを適用）
         if cfg.use_focal_loss:
-            from losses import FocalLoss
             if cfg.use_class_weights and hasattr(self, 'class_weights') and self.class_weights is not None:
                 self.criterion = FocalLoss(
                     alpha=cfg.focal_loss_alpha,
@@ -648,7 +605,7 @@ class ClassificationTrainer:
             # 学習終了後、confusion matrixを生成（ベストモデルと最終モデルの両方）
 
             # Predictorを作成
-            predictor = Predictor(
+            predictor = ClassificationPredictor(
                 model=self.model,
                 device=self.device,
                 class_to_idx=self.class_to_idx,
@@ -899,7 +856,7 @@ def main():
     os.environ["WANDB_DIR"] = str(run_dir / "wandb")
 
     # ログは run_dir/train.log に出力
-    logger = setup_logging(str(run_dir), "INFO")
+    logger = setup_logging(log_dir=str(run_dir), log_level="INFO")
     logger.info(f"出力ルート: {run_dir.resolve()}")
 
     try:
