@@ -34,3 +34,19 @@ autodoc_default_options = {
     "special-members": "__init__",
     "undoc-members": True,
 }
+
+# 重い依存関係はCIでインストールせずにモックする
+autodoc_mock_imports = [
+    "torch",
+    "torchvision",
+    "sklearn",
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "mmengine",
+    "mmpretrain",
+    "openmim",
+    "wandb",
+    "neptune",
+]
