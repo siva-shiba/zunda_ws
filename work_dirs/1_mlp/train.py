@@ -646,41 +646,22 @@ class ClassificationTrainer:
                 self.runner.call("on_eval_end", self)
 
             # 学習終了後、confusion matrixを生成（ベストモデルと最終モデルの両方）
-            # CVの場合はtest_loaderが空なのでスキップ
+
+            # Predictorを作成
+            predictor = Predictor(
+                model=self.model,
+                device=self.device,
+                class_to_idx=self.class_to_idx,
+                idx_to_class=self.idx_to_class,
+                logger=self.logger,
+            )
             if hasattr(self, 'test_loader') and len(self.test_loader.dataset) > 0:
                 self.logger.info("学習終了後、confusion matrixを生成中...")
 
-                # Predictorを作成
-                predictor = Predictor(
-                    model=self.model,
-                    device=self.device,
-                    class_to_idx=self.class_to_idx,
-                    idx_to_class=self.idx_to_class,
-                    logger=self.logger,
-                )
-
-                # ベストモデルでconfusion matrixを生成
-                best_cm_paths = {}
-                best_checkpoint_path = self.save_dir / 'best_model.pt'
-                if best_checkpoint_path.exists():
-                    self.logger.info("ベストモデルでconfusion matrixを生成中...")
-                    best_checkpoint = torch.load(best_checkpoint_path, map_location=self.device)
-                    self.model.load_state_dict(best_checkpoint['model_state_dict'])
-
-                    for split_name, loader in [('train', self.train_loader), ('val', self.val_loader), ('test', self.test_loader)]:
-                        _, _, pred_labels, true_labels, _ = predictor.predict(loader)
-                        cm_path = predictor.create_confusion_matrix(
-                            true_labels, pred_labels, split_name,
-                            model_type='best',
-                            save_dir=self.results_dir,
-                            use_timestamp=False,
-                        )
-                        best_cm_paths[f'{split_name}_cm'] = str(cm_path)
-                        self.plots[f'confusion_matrix/best/{split_name}_cm'] = str(cm_path)
-
                 # 最終モデルでconfusion matrixを生成
                 self.logger.info("最終モデルでconfusion matrixを生成中...")
-                self.model.load_state_dict(checkpoint['model_state_dict'])
+                checksum = sum(p.sum().item() for p in predictor.model.parameters())
+                self.logger.info(f"最終モデルの重みチェックサム: {checksum:.6f}")
 
                 final_cm_paths = {}
                 for split_name, loader in [('train', self.train_loader), ('val', self.val_loader), ('test', self.test_loader)]:
@@ -693,18 +674,47 @@ class ClassificationTrainer:
                     )
                     final_cm_paths[f'{split_name}_cm'] = str(cm_path)
                     self.plots[f'confusion_matrix/final/{split_name}_cm'] = str(cm_path)
+
+                # ベストモデルでconfusion matrixを生成
+                best_cm_paths = {}
+                best_checkpoint_path = self.save_dir / 'best_model.pt'
+                if best_checkpoint_path.exists():
+                    self.logger.info("ベストモデルでconfusion matrixを生成中...")
+                    best_checkpoint = torch.load(best_checkpoint_path, map_location=self.device)
+                    self.model.load_state_dict(best_checkpoint['model_state_dict'])
+
+                    checksum = sum(p.sum().item() for p in predictor.model.parameters())
+                    self.logger.info(f"ベストモデルの重みチェックサム: {checksum:.6f}")
+
+                    for split_name, loader in [('train', self.train_loader), ('val', self.val_loader), ('test', self.test_loader)]:
+                        _, _, pred_labels, true_labels, _ = predictor.predict(loader)
+                        cm_path = predictor.create_confusion_matrix(
+                            true_labels, pred_labels, split_name,
+                            model_type='best',
+                            save_dir=self.results_dir,
+                            use_timestamp=False,
+                        )
+                        best_cm_paths[f'{split_name}_cm'] = str(cm_path)
+                        self.plots[f'confusion_matrix/best/{split_name}_cm'] = str(cm_path)
             else:
                 # CVの場合はtrain/valのみ
+                # final→bestの順で処理
                 self.logger.info("学習終了後、confusion matrixを生成中...")
 
-                # Predictorを作成
-                predictor = Predictor(
-                    model=self.model,
-                    device=self.device,
-                    class_to_idx=self.class_to_idx,
-                    idx_to_class=self.idx_to_class,
-                    logger=self.logger,
-                )
+
+                # 最終モデルでconfusion matrixを生成
+                self.logger.info("最終モデルでconfusion matrixを生成中...")
+                final_cm_paths = {}
+                for split_name, loader in [('train', self.train_loader), ('val', self.val_loader)]:
+                    _, _, pred_labels, true_labels, _ = predictor.predict(loader)
+                    cm_path = predictor.create_confusion_matrix(
+                        true_labels, pred_labels, split_name,
+                        model_type='final',
+                        save_dir=self.results_dir,
+                        use_timestamp=False,
+                    )
+                    final_cm_paths[f'{split_name}_cm'] = str(cm_path)
+                    self.plots[f'confusion_matrix/final/{split_name}_cm'] = str(cm_path)
 
                 # ベストモデルでconfusion matrixを生成
                 best_cm_paths = {}
@@ -724,22 +734,6 @@ class ClassificationTrainer:
                         )
                         best_cm_paths[f'{split_name}_cm'] = str(cm_path)
                         self.plots[f'confusion_matrix/best/{split_name}_cm'] = str(cm_path)
-
-                # 最終モデルでconfusion matrixを生成
-                self.logger.info("最終モデルでconfusion matrixを生成中...")
-                self.model.load_state_dict(checkpoint['model_state_dict'])
-
-                final_cm_paths = {}
-                for split_name, loader in [('train', self.train_loader), ('val', self.val_loader)]:
-                    _, _, pred_labels, true_labels, _ = predictor.predict(loader)
-                    cm_path = predictor.create_confusion_matrix(
-                        true_labels, pred_labels, split_name,
-                        model_type='final',
-                        save_dir=self.results_dir,
-                        use_timestamp=False,
-                    )
-                    final_cm_paths[f'{split_name}_cm'] = str(cm_path)
-                    self.plots[f'confusion_matrix/final/{split_name}_cm'] = str(cm_path)
 
             self.metrics.update({
                 "final_train_loss": self.history["train_loss"][-1] if self.history["train_loss"] else 0.0,
