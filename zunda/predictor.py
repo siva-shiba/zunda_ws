@@ -121,7 +121,7 @@ class ClassificationPredictor:
 
         all_class_names = sorted(self.class_to_idx.keys())
         cm = confusion_matrix(
-            true_labels, pred_labels, labels=all_class_names
+            true_labels, pred_labels, labels=all_class_names, normalize="true"
         )
         accuracy = (np.array(true_labels) == np.array(pred_labels)).mean()
 
@@ -129,7 +129,7 @@ class ClassificationPredictor:
         sns.heatmap(
             cm,
             annot=True,
-            fmt='d',
+            fmt=".2f",
             cmap='Blues',
             xticklabels=all_class_names,
             yticklabels=all_class_names
@@ -210,7 +210,7 @@ class ClassificationPredictor:
         if save_confusion_matrix or save_confusion_matrix_csv:
             all_class_names = sorted(self.class_to_idx.keys())
             cm = confusion_matrix(
-                true_labels, pred_labels, labels=all_class_names
+                true_labels, pred_labels, labels=all_class_names, normalize="true",
             )
             if save_confusion_matrix:
                 cm_path = self.create_confusion_matrix(
