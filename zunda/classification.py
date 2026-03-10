@@ -464,7 +464,17 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
                 for old_idx in include_indices_set
             }
         else:
-            old_to_new = None
+            # exclude_class のみ: 残ったクラスで class_to_idx を再定義し、ラベルを 0,1,... に振り直す
+            remaining_indices = sorted(
+                {full_dataset.samples[idx][2] for idx in include_samples}
+            )
+            new_class_to_idx = {
+                idx_to_class[old_idx]: i for i, old_idx in enumerate(remaining_indices)
+            }
+            new_idx_to_class = {i: idx_to_class[old_idx] for i, old_idx in enumerate(remaining_indices)}
+            class_to_idx = new_class_to_idx
+            idx_to_class = new_idx_to_class
+            old_to_new = {old_idx: i for i, old_idx in enumerate(remaining_indices)}
 
         # インデックスでサブセットを作成するためのカスタムデータセット
         class FilteredDataset:
