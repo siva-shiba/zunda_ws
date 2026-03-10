@@ -29,7 +29,7 @@ sh docker/run-docker.sh
 
 ## List (作成チェック)
 
-- [ ] 画像分類(MLP)
+- [x] 画像分類(MLP)
 - [ ] 画像分類(CNN)
 - [ ] 物体検出(R-CNN系)
 - [ ] 物体検出(YOLO系)
