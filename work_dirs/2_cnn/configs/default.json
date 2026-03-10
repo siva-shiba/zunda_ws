@@ -11,7 +11,7 @@
   "use_cv": false,
   "cv_folds": 5,
   "test_eval_interval": null,
-  "use_class_weights": true,
+  "use_class_weights": false,
   "use_weighted_sampler": false,
   "use_focal_loss": false,
   "include_classes": null
