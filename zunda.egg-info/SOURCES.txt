@@ -5,6 +5,9 @@ zunda/cross_validation.py
 zunda/cv_adapters.py
 zunda/data_augmentation.py
 zunda/dataset.py
+zunda/dataset_adapters.py
+zunda/losses.py
+zunda/predictor.py
 zunda.egg-info/PKG-INFO
 zunda.egg-info/SOURCES.txt
 zunda.egg-info/dependency_links.txt
@@ -14,3 +17,5 @@ zunda/callbacks/__init__.py
 zunda/callbacks/base.py
 zunda/callbacks/logging_cb.py
 zunda/callbacks/wandb_cb.py
+zunda/utils/__init__.py
+zunda/utils/logging.py
