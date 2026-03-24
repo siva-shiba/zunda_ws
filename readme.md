@@ -27,6 +27,32 @@ sh docker/run-docker.sh
 - コンテナ起動時に entrypoint が `/ws` を検知し、`pip install -e /ws` で zunda を自動インストールする。
 - コンテナ内の作業ディレクトリは `/ws`（ホストのリポジトリがマウントされている）。
 
+## OPTION : WANDB（実験ログ）の設定
+
+WANDB で実験ログを記録する設定．wandbのアカウントがあれば設定できる．
+
+### 設定方法
+
+1. [wandb.ai](https://wandb.ai) でアカウント作成 → 設定ページから API キーを取得
+2. プロジェクトルート（`zunda_ws`）に `.wandb` ファイルを作成し、API キーを1行で記述:
+
+   ```bash
+   # リポジトリルートで実行
+   cp .wandb.example .wandb
+   # .wandb を編集して API キーを記述（1行のみ）
+   ```
+
+   または: `echo "your_api_key_here" > .wandb`（`your_api_key_here` を実際の API キーに置き換える）
+
+3. `.wandb` は `.gitignore` 済み（API キーの漏洩を防ぐ）
+
+### その他の方法
+
+- **環境変数**: `export WANDB_API_KEY=your_api_key_here`
+- **WANDB を使わない**: 学習時に `-o use_wandb=false` を指定（例: `python train.py -o use_wandb=false`）
+
+詳細は各 work_dir の README（例: `work_dirs/1_mlp/README.md`）を参照。
+
 ## List (作成チェック)
 
 東北ずん子PJの公開データ（[公式イラスト・3D](https://zunko.jp/con_illust.html)、[AI画像用学習データ](https://zunko.jp/con_illust.html)、[マルチモーダルDB](https://zunko.jp/multimodal_dev/login.php)等）を前提
@@ -35,11 +61,11 @@ sh docker/run-docker.sh
   - [x] MLP
   - [x] CNN
   - [ ] Deep-CNN
-  - [ ] VGG
-  - [ ] ResNet
-  - [ ] MobileNet
-  - [ ] EfficientNet
-  - [ ] ConvNeXt
+    - [ ] VGG
+    - [ ] ResNet
+    - [ ] MobileNet
+    - [ ] EfficientNet
+    - [ ] ConvNeXt
   - [ ] ViT
 
 - [ ] 言語（[シンプルずんだもん](https://huggingface.co/datasets/alfredplpl/simple-zundamon)・[dolly-15k-ja-zundamon](https://huggingface.co/datasets/takaaki-inada/databricks-dolly-15k-ja-zundamon)等で実施。現役のモデル構造に直結するもののみ）

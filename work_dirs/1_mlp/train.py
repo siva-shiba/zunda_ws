@@ -801,27 +801,30 @@ def config_dict_to_trainer_config(d: Dict[str, Any]) -> TrainerConfig:
 
 
 def parse_args():
-    """コマンドライン引数を解析. 設定ファイルと -o key=value による上書きのみ受け付ける."""
+    """コマンドライン引数を解析. 設定ファイルと -o key=value による上書きを受け付ける."""
     parser = argparse.ArgumentParser(
         description="分類タスク用MLPの学習（設定ファイル + 上書き）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 例:
-  # 設定ファイルのみ
-  python train.py config.json
+  # デフォルト設定で学習（config 省略時は configs/default.json を使用）
+  python train.py
+
+  # 設定ファイルを指定
+  python train.py configs/default.json
 
   # 設定ファイル + 上書き
-  python train.py config.json -o epochs=100 -o lr=0.0005
+  python train.py configs/default.json -o epochs=100 -o lr=0.0005
 
   # 上書きのみ（data_root は必須）
-  python train.py -o data_root=/ws/data/images -o epochs=50
+  python train.py -o data_root=data/touhoku -o epochs=50
 """
     )
     parser.add_argument(
         "config",
         nargs="?",
         default=None,
-        help="設定ファイル（JSON）。省略時は全項目を -o またはデフォルトで指定"
+        help="設定ファイル（JSON）。省略時は configs/default.json を使用"
     )
     parser.add_argument(
         "-o", "--override",
@@ -860,7 +863,11 @@ def main():
     logger.info(f"出力ルート: {run_dir.resolve()}")
 
     try:
-        config_path = Path(args.config) if args.config else None
+        if args.config:
+            config_path = Path(args.config)
+        else:
+            # 省略時はconfigs/default.json
+            config_path = Path(__file__).parent / "configs" / "default.json"
         base = load_config(config_path)
         field_types = {f.name: f.type for f in fields(TrainerConfig)}
         for k, t in list(field_types.items()):

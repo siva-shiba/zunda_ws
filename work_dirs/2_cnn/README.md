@@ -1,10 +1,10 @@
-# MLP分類タスク
+# CNN分類タスク
 
-分類タスク用の簡易MLPモデルの学習スクリプトです。
+分類タスク用の簡易CNNモデルの学習スクリプトです。
 
 ## ファイル構成
 
-- `train.py`: MLPモデルの学習スクリプト
+- `train.py`: CNNモデルの学習スクリプト
 - `configs/`: 設定ファイル（JSON）ディレクトリ
 
 ## 使用方法
@@ -22,7 +22,7 @@ config を省略した場合、`configs/default.json` が使用されます。
 ### 例
 
 ```bash
-# デフォルト設定で学習
+# デフォルト設定で学習（work_dirs/2_cnn などどこから実行しても可）
 python train.py
 
 # 設定ファイルを明示指定
@@ -44,7 +44,7 @@ python train.py configs/default.json \
 
 - `data/touhoku_project_images` → `<リポジトリルート>/data/touhoku_project_images`
 - 絶対パスを指定した場合はそのまま使用されます
-- `work_dirs/1_mlp` など深いディレクトリから実行しても正しく動作します
+- `work_dirs/2_cnn` など深いディレクトリから実行しても正しく動作します
 
 ### 設定ファイル
 
@@ -57,7 +57,7 @@ python train.py configs/default.json \
 | batch_size | バッチサイズ | 32 |
 | epochs | エポック数 | 10 |
 | lr | 学習率 | 0.001 |
-| hidden_size | 隠れ層のサイズ | 512 |
+| fc_hidden | 全結合層の隠れユニット数 | 256 |
 | num_workers | DataLoader ワーカー数（共有メモリ不足時は 0 推奨） | 4 |
 | use_wandb | WANDB を使用する | true |
 
@@ -66,7 +66,7 @@ python train.py configs/default.json \
 学習の進行状況は以下のように記録されます:
 
 - **コンソール出力**: 標準出力にログが表示されます
-- **ログファイル**: `logs/train_YYYYMMDD_HHMMSS.log` にタイムスタンプ付きで保存されます
+- **ログファイル**: `outputs/YYYYMMDD_HHMMSS/train.log` にタイムスタンプ付きで保存されます
 - **WANDB**: 実験結果をWANDBに記録（デフォルトで有効）
 
 ログには以下が含まれます:
@@ -143,13 +143,13 @@ python train.py configs/default.json \
 
 ```bash
 # WANDBを使用して学習（デフォルト）
-python train.py configs/default.json
+python train.py
 
 # カスタムプロジェクト名とラン名を指定
 python train.py configs/default.json \
     -o wandb_project=my-project \
     -o wandb_run_name=experiment-1 \
-    -o wandb_tags=mlp,baseline
+    -o wandb_tags=cnn,baseline
 
 # WANDBを使用しない
 python train.py configs/default.json -o use_wandb=false
@@ -159,28 +159,28 @@ python train.py configs/default.json -o use_wandb=false
 
 - **ハイパーパラメータ**: 画像サイズ、バッチサイズ、学習率など
 - **メトリクス**: 各エポックの学習/検証/テスト損失と精度
-- **モデル構造**: MLPのアーキテクチャ
+- **モデル構造**: CNNのアーキテクチャ
 - **ベストモデル**: 検証精度が最も高いエポックの情報
 - **チェックポイント**: ベストモデルのファイル（オプション）
 
 ## モデル構造
 
-簡易的なMLPモデル:
-- Flatten層
-- Linear (入力 -> hidden_size) + ReLU + Dropout(0.2)
-- Linear (hidden_size -> hidden_size) + ReLU + Dropout(0.2)
-- Linear (hidden_size -> num_classes)
+簡易的なCNNモデル:
+- Conv2d(3→32) + ReLU + MaxPool2d
+- Conv2d(32→64) + ReLU + MaxPool2d
+- Conv2d(64→128) + ReLU + MaxPool2d
+- Flatten → Linear → ReLU → Dropout(0.3) → Linear → num_classes
 
 ## 出力
 
 ### チェックポイント
 
-- `checkpoints/best_model.pt`: 検証精度が最も高いモデル
-- `checkpoints/final_model.pt`: 最終エポックのモデル
+- `outputs/YYYYMMDD_HHMMSS/checkpoints/best_model.pt`: 検証精度が最も高いモデル
+- `outputs/YYYYMMDD_HHMMSS/checkpoints/final_model.pt`: 最終エポックのモデル
 
 ### ログファイル
 
-- `logs/train_YYYYMMDD_HHMMSS.log`: 学習ログ（タイムスタンプ付き）
+- `outputs/YYYYMMDD_HHMMSS/train.log`: 学習ログ（タイムスタンプ付き）
 
 チェックポイントには以下が含まれます:
 - `model_state_dict`: モデルの重み
@@ -250,18 +250,18 @@ WANDBの認証エラーが発生する場合:
    ls -la ~/.config/wandb_docker/
    ```
 
-3. **環境変数が設定されているか確認**
+5. **環境変数が設定されているか確認**
    ```bash
    echo $WANDB_API_KEY
    ```
 
-4. **コンテナ内でログイン**
+6. **コンテナ内でログイン**
    ```bash
    docker compose exec zunda bash
    wandb login
    ```
 
-5. **オフラインモードで実行**
+7. **オフラインモードで実行**
    ```bash
    export WANDB_MODE=offline
    docker compose up -d --build
