@@ -1,0 +1,7 @@
+{
+  "_base_": "base.json",
+  "model_name": "mobilenet_v3_small",
+  "wandb_tags": [
+    "mobilenet_v3_small"
+  ]
+}

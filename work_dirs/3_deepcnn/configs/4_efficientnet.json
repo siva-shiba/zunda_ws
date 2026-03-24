@@ -1,0 +1,7 @@
+{
+  "_base_": "base.json",
+  "model_name": "efficientnet_b0",
+  "wandb_tags": [
+    "efficientnet_b0"
+  ]
+}

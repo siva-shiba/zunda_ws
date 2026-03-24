@@ -1,0 +1,7 @@
+{
+  "_base_": "base.json",
+  "model_name": "resnet50",
+  "wandb_tags": [
+    "resnet50"
+  ]
+}

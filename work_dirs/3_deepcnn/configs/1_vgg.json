@@ -1,0 +1,7 @@
+{
+  "_base_": "base.json",
+  "model_name": "vgg16",
+  "wandb_tags": [
+    "vgg16"
+  ]
+}

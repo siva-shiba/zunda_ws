@@ -1,0 +1,7 @@
+{
+  "_base_": "base.json",
+  "model_name": "convnext_tiny",
+  "wandb_tags": [
+    "convnext_tiny"
+  ]
+}
