@@ -819,7 +819,7 @@ def main():
         cfg_dict["results_dir"] = str(run_dir / "results")
         cfg = TrainerConfig(**cfg_dict)
         if getattr(cfg, "wandb_run_name", None) in (None, ""):
-            cfg.wandb_run_name = f"{cfg.wandb_project}_{cfg.model_name}_{run_id}"
+            cfg.wandb_run_name = f"{cfg.model_name}_{run_id}"
 
         callbacks = [
             WandbCallback(cfg, logger=logger),

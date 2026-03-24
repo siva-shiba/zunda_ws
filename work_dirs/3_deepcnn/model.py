@@ -1,6 +1,12 @@
 """DeepCNNモデル定義（VGG/ResNet/MobileNet/EfficientNet/ConvNeXt）.
 
 torchvision の pre-trained モデルを Config で切り替えて利用します.
+
+注意:
+- 各クラス内のコメントアウトされた「手書き構造」は学習用の参照コードです。
+- 実際に返すモデルは torchvision 実装です。
+- コメントアウトの手書き構造は、可読性のため一部簡略化しています
+  （層数・ブロック詳細・分岐の厳密再現はしていません）。
 """
 
 from typing import Optional
@@ -35,10 +41,6 @@ def _get_backbone_family(model_name: str) -> str:
 
 
 class DeepCNN(nn.Module):
-    """DeepCNNモデル（torchvision バックボーン切り替え）.
-
-    1_mlp / 2_cnn と同様にクラスとして定義し、内部で torchvision モデルを保持する。
-    """
 
     def __init__(
         self,
@@ -81,6 +83,149 @@ class DeepCNN(nn.Module):
         return self.net(x)
 
 
+class VGGDeepCNN(DeepCNN):
+    """VGG バックボーン."""
+
+    def __init__(self, model_name: str, num_classes: int, in_channels: int = 3, pretrained: bool = False, weights: Optional[str] = None, **kwargs):
+        # 手書き構造[簡略版]（参考用。実際には torchvision の VGG を返す）
+        # self.features = nn.Sequential(
+        #     nn.Conv2d(in_channels, 64, 3, padding=1), nn.ReLU(inplace=True),
+        #     nn.Conv2d(64, 64, 3, padding=1), nn.ReLU(inplace=True), nn.MaxPool2d(2),
+        #     nn.Conv2d(64, 128, 3, padding=1), nn.ReLU(inplace=True),
+        #     nn.Conv2d(128, 128, 3, padding=1), nn.ReLU(inplace=True), nn.MaxPool2d(2),
+        #     nn.Conv2d(128, 256, 3, padding=1), nn.ReLU(inplace=True),
+        #     nn.Conv2d(256, 256, 3, padding=1), nn.ReLU(inplace=True), nn.MaxPool2d(2),
+        # )
+        # self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
+        # self.classifier = nn.Sequential(
+        #     nn.Flatten(),
+        #     nn.Linear(256 * 7 * 7, 4096), nn.ReLU(inplace=True), nn.Dropout(0.5),
+        #     nn.Linear(4096, 4096), nn.ReLU(inplace=True), nn.Dropout(0.5),
+        #     nn.Linear(4096, num_classes),
+        # )
+        # def forward(self, x):
+        #     x = self.features(x)
+        #     x = self.avgpool(x)
+        #     return self.classifier(x)
+        super().__init__(model_name, num_classes, in_channels, pretrained, weights, **kwargs)
+
+
+class ResNetDeepCNN(DeepCNN):
+    """ResNet バックボーン."""
+
+    def __init__(self, model_name: str, num_classes: int, in_channels: int = 3, pretrained: bool = False, weights: Optional[str] = None, **kwargs):
+        # 手書き構造[簡略版]（参考用。実際には torchvision の ResNet を返す）
+        # self.stem = nn.Sequential(
+        #     nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False),
+        #     nn.BatchNorm2d(64), nn.ReLU(inplace=True), nn.MaxPool2d(3, stride=2, padding=1),
+        # )
+        # self.layer1 = nn.Sequential(
+        #     nn.Conv2d(64, 64, 3, padding=1, bias=False), nn.BatchNorm2d(64), nn.ReLU(inplace=True),
+        #     nn.Conv2d(64, 64, 3, padding=1, bias=False), nn.BatchNorm2d(64),
+        # )
+        # self.layer2 = nn.Sequential(
+        #     nn.Conv2d(64, 128, 3, stride=2, padding=1, bias=False), nn.BatchNorm2d(128), nn.ReLU(inplace=True),
+        #     nn.Conv2d(128, 128, 3, padding=1, bias=False), nn.BatchNorm2d(128),
+        # )
+        # self.gap = nn.AdaptiveAvgPool2d((1, 1))
+        # self.fc = nn.Linear(128, num_classes)
+        # def forward(self, x):
+        #     x = self.stem(x)
+        #     x = self.layer1(x) + x  # 簡易残差
+        #     x2 = self.layer2(x)
+        #     x = x2
+        #     x = self.gap(x).flatten(1)
+        #     return self.fc(x)
+        super().__init__(model_name, num_classes, in_channels, pretrained, weights, **kwargs)
+
+
+class MobileNetDeepCNN(DeepCNN):
+    """MobileNet バックボーン."""
+
+    def __init__(self, model_name: str, num_classes: int, in_channels: int = 3, pretrained: bool = False, weights: Optional[str] = None, **kwargs):
+        # 手書き構造[簡略版]（参考用。実際には torchvision の MobileNet を返す）
+        # self.features = nn.Sequential(
+        #     nn.Conv2d(in_channels, 16, 3, stride=2, padding=1, bias=False),
+        #     nn.BatchNorm2d(16), nn.ReLU6(inplace=True),
+        #     nn.Conv2d(16, 16, 3, stride=1, padding=1, groups=16, bias=False),  # depthwise
+        #     nn.BatchNorm2d(16), nn.ReLU6(inplace=True),
+        #     nn.Conv2d(16, 24, 1, bias=False),  # pointwise
+        #     nn.BatchNorm2d(24), nn.ReLU6(inplace=True),
+        #     nn.Conv2d(24, 24, 3, stride=2, padding=1, groups=24, bias=False),
+        #     nn.BatchNorm2d(24), nn.ReLU6(inplace=True),
+        #     nn.Conv2d(24, 40, 1, bias=False),
+        #     nn.BatchNorm2d(40), nn.ReLU6(inplace=True),
+        # )
+        # self.gap = nn.AdaptiveAvgPool2d((1, 1))
+        # self.classifier = nn.Sequential(
+        #     nn.Dropout(0.2),
+        #     nn.Linear(40, num_classes),
+        # )
+        # def forward(self, x):
+        #     x = self.features(x)
+        #     x = self.gap(x).flatten(1)
+        #     return self.classifier(x)
+        super().__init__(model_name, num_classes, in_channels, pretrained, weights, **kwargs)
+
+
+class EfficientNetDeepCNN(DeepCNN):
+    """EfficientNet バックボーン."""
+
+    def __init__(self, model_name: str, num_classes: int, in_channels: int = 3, pretrained: bool = False, weights: Optional[str] = None, **kwargs):
+        # 手書き構造[簡略版]（参考用。実際には torchvision の EfficientNet を返す）
+        # self.stem = nn.Sequential(
+        #     nn.Conv2d(in_channels, 32, 3, stride=2, padding=1, bias=False),
+        #     nn.BatchNorm2d(32), nn.SiLU(inplace=True),
+        # )
+        # self.blocks = nn.Sequential(
+        #     nn.Conv2d(32, 32, 3, padding=1, groups=32, bias=False), nn.BatchNorm2d(32), nn.SiLU(inplace=True),
+        #     nn.Conv2d(32, 16, 1, bias=False), nn.BatchNorm2d(16), nn.SiLU(inplace=True),
+        #     nn.Conv2d(16, 16, 3, stride=2, padding=1, groups=16, bias=False), nn.BatchNorm2d(16), nn.SiLU(inplace=True),
+        #     nn.Conv2d(16, 24, 1, bias=False), nn.BatchNorm2d(24), nn.SiLU(inplace=True),
+        # )
+        # self.head = nn.Sequential(
+        #     nn.Conv2d(24, 1280, 1, bias=False), nn.BatchNorm2d(1280), nn.SiLU(inplace=True),
+        # )
+        # self.gap = nn.AdaptiveAvgPool2d((1, 1))
+        # self.classifier = nn.Sequential(nn.Dropout(0.2), nn.Linear(1280, num_classes))
+        # def forward(self, x):
+        #     x = self.stem(x)
+        #     x = self.blocks(x)
+        #     x = self.head(x)
+        #     x = self.gap(x).flatten(1)
+        #     return self.classifier(x)
+        super().__init__(model_name, num_classes, in_channels, pretrained, weights, **kwargs)
+
+
+class ConvNeXtDeepCNN(DeepCNN):
+    """ConvNeXt バックボーン."""
+
+    def __init__(self, model_name: str, num_classes: int, in_channels: int = 3, pretrained: bool = False, weights: Optional[str] = None, **kwargs):
+        # 手書き構造[簡略版]（参考用。実際には torchvision の ConvNeXt を返す）
+        # self.stem = nn.Conv2d(in_channels, 96, kernel_size=4, stride=4)
+        # self.stage1 = nn.Sequential(
+        #     nn.Conv2d(96, 96, 7, padding=3, groups=96),  # depthwise large kernel
+        #     nn.BatchNorm2d(96), nn.GELU(),
+        #     nn.Conv2d(96, 96, 1), nn.GELU(),
+        # )
+        # self.downsample1 = nn.Conv2d(96, 192, kernel_size=2, stride=2)
+        # self.stage2 = nn.Sequential(
+        #     nn.Conv2d(192, 192, 7, padding=3, groups=192),
+        #     nn.BatchNorm2d(192), nn.GELU(),
+        #     nn.Conv2d(192, 192, 1), nn.GELU(),
+        # )
+        # self.gap = nn.AdaptiveAvgPool2d((1, 1))
+        # self.classifier = nn.Sequential(nn.Flatten(), nn.Linear(192, num_classes))
+        # def forward(self, x):
+        #     x = self.stem(x)
+        #     x = self.stage1(x)
+        #     x = self.downsample1(x)
+        #     x = self.stage2(x)
+        #     x = self.gap(x)
+        #     return self.classifier(x)
+        super().__init__(model_name, num_classes, in_channels, pretrained, weights, **kwargs)
+
+
 def build_deepcnn_model(
     model_name: str,
     num_classes: int,
@@ -105,7 +250,16 @@ def build_deepcnn_model(
     Returns:
         nn.Module: 分類モデル
     """
-    model = DeepCNN(
+    family = _get_backbone_family(model_name)
+    model_cls_map = {
+        "vgg": VGGDeepCNN,
+        "resnet": ResNetDeepCNN,
+        "mobilenet": MobileNetDeepCNN,
+        "efficientnet": EfficientNetDeepCNN,
+        "convnext": ConvNeXtDeepCNN,
+    }
+    model_cls = model_cls_map[family]
+    model = model_cls(
         model_name=model_name,
         num_classes=num_classes,
         in_channels=in_channels,
