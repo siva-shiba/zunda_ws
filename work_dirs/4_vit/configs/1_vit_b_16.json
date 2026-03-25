@@ -1,0 +1,6 @@
+{
+  "_base_": "base.json",
+  "model_name": "vit_b_16",
+  "wandb_tags": ["vit_b_16"]
+}
+

@@ -78,13 +78,8 @@ WANDB で実験ログを記録する設定．wandbのアカウントがあれば
 - [ ] 画像分類
   - [x] MLP
   - [x] CNN
-  - [x] Deep-CNN
-    - [x] VGG
-    - [x] ResNet
-    - [x] MobileNet
-    - [x] EfficientNet
-    - [x] ConvNeXt
-  - [ ] ViT
+  - [x] Deep-CNN (VGG / ResNet / MobileNet / EfficientNet / ConvNeXt)
+  - [x] ViT
 
 - [ ] 言語（[シンプルずんだもん](https://huggingface.co/datasets/alfredplpl/simple-zundamon)・[dolly-15k-ja-zundamon](https://huggingface.co/datasets/takaaki-inada/databricks-dolly-15k-ja-zundamon)等で実施。現役のモデル構造に直結するもののみ）
   - [ ] 統計ベースライン（n-gram / TF-IDF）

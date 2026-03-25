@@ -1,0 +1,7 @@
+{
+  "_base_": "base.json",
+  "model_name": "vit_b_32",
+  "image_size": 224,
+  "wandb_tags": ["vit_b_32"]
+}
+

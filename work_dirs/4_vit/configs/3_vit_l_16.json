@@ -1,0 +1,7 @@
+{
+  "_base_": "base.json",
+  "model_name": "vit_l_16",
+  "image_size": 224,
+  "wandb_tags": ["vit_l_16"]
+}
+

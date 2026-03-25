@@ -1,0 +1,23 @@
+{
+  "data_root": "data/touhoku_project_images",
+  "image_size": 224,
+  "batch_size": 32,
+  "epochs": 100,
+  "lr": 0.0001,
+  "pretrained": true,
+  "seed": 42,
+  "use_wandb": true,
+  "wandb_project": "vit",
+
+  "use_class_weights": false,
+  "use_weighted_sampler": false,
+  "use_stratified_split": true,
+  "class_weight_method": "balanced",
+
+  "use_focal_loss": false,
+  "focal_loss_alpha": 0.25,
+  "focal_loss_gamma": 2.0,
+
+  "include_classes": null,
+  "num_workers": 4
+}
