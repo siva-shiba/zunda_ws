@@ -21,23 +21,20 @@
 
 ### 基本的な使用方法
 
-```bash
-python train.py [config.json] [-o KEY=VALUE ...]
-```
+**config は必須**です。設定ファイル（JSON）と `-o key=value` による上書きで学習します。
 
-config を省略した場合、`configs/default.json` が使用されます。
+```bash
+python train.py configs/<config名>.json [-o KEY=VALUE ...]
+```
 
 ### 例
 
 ```bash
-# デフォルト設定で学習
-python train.py
-
-# 設定ファイルを明示指定
+# デフォルト相当（vit_b_16）
 python train.py configs/default.json
 
 # data_root を上書き（リポジトリルート相対パスで指定）
-python train.py -o data_root=data/touhoku_project_images
+python train.py configs/default.json -o data_root=data/touhoku_project_images
 
 # 複数項目を上書き
 python train.py configs/default.json \
