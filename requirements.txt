@@ -1,4 +1,4 @@
-# PyTorch (Docker ベースイメージと合わせる場合: CUDA 11.8)
+# PyTorch（venv 用 / CUDA 11.8。Docker はベースイメージ同梱のため torch 行は docker/requirements-runtime.txt に含めない）
 --extra-index-url https://download.pytorch.org/whl/cu118
 torch==2.6.0
 torchvision==0.21.0
@@ -10,6 +10,7 @@ wandb
 # 学習・評価
 scikit-learn
 seaborn
+
 
 # OpenMMLab（mmcv はソースビルドで CUDA_HOME が必要なため別ファイルで wheel を指定）
 openmim

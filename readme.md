@@ -23,9 +23,27 @@ cd /path/to/zunda_ws
 sh docker/run-docker.sh
 ```
 
-- 初回は `docker compose up -d --build` でイメージをビルド（`requirements.txt` で依存関係をインストール）。
+- 初回は `docker compose up -d --build` でイメージをビルド（`docker/requirements-runtime.txt` と `requirements-mmcv.txt` で依存関係をインストール。torch はベースイメージ同梱）。
 - コンテナ起動時に entrypoint が `/ws` を検知し、`pip install -e /ws` で zunda を自動インストールする。
 - コンテナ内の作業ディレクトリは `/ws`（ホストのリポジトリがマウントされている）。
+
+## 画像データセットの取得（ずんずんPJ・AI画像用学習データ）
+
+配布元・利用条件は [ずんずんPJ イラスト/3D](https://zunko.jp/con_illust.html) のガイドラインに従ってください。
+公式が案内している [Google Drive の学習用画像フォルダ](https://drive.google.com/drive/folders/1NIZcBRvr5i8YfPsPYwvVMC7SoH-cWLIk?usp=sharing) を取得する手順です。
+
+リポジトリルートで次を実行します。
+
+```bash
+python tools/setup_touhoku_images_browser.py
+```
+
+- 既定の保存先は `data/touhoku_project_images/`（`TouhokuProjectClassificationDataset` の `data_root` にそのまま指定可能な配置になる想定）。
+- スクリプトがフォルダ URL を表示（ローカル環境ではブラウザを自動起動）し、ZIP ダウンロード後に ZIP のパス入力を促します。
+- ZIP の場所が分かっている場合は対話を省略できます: `python tools/setup_touhoku_images_browser.py --zip ~/Downloads/AIモデルなど.zip`
+- ブラウザを開かない場合は `--no-browser` を指定します（リモート環境向け）。
+
+Docker やリモートシェルではホスト側のブラウザを使って ZIP を取得し、コンテナ/リモート側へコピーしてから `--zip` を指定してください。
 
 ## OPTION : WANDB（実験ログ）の設定
 
@@ -113,7 +131,7 @@ WANDB で実験ログを記録する設定．wandbのアカウントがあれば
 
 ## ToDo
 
-- [ ] ~~datasetのダウンロードと配置スクリプト作成~~ zipじゃないと自動化できないので保留
+- [x] datasetのダウンロードと配置（`tools/setup_touhoku_images_browser.py`）
 - [x] データローダの作成
 - [ ] BBoxアノテーション (顔)
 - [ ] Segmアノテーション (未定)
