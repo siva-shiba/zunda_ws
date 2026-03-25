@@ -35,12 +35,12 @@ Config でバックボーンを切り替えて利用します。
 ![ResNetアーキテクチャ](resnet_architecture.png)
 
 #### MobileNet (MobileNetV3-Small)
-軽量・高速な Depthwise Separable Convolution と Inverted Residual。
+軽量・高速な Depthwise Separable Convolution と Inverted Residual。Attentionのはしり
 
 - **設計思想**: 通常畳み込みを Depthwise + Pointwise に分解して計算量を削減
 - **主要要素**:
-  - **MBConv**: 拡張（1×1 Conv）→空間特徴計算（3×3 Depthwise Conv）→圧縮（1×1 Conv）を行う (Mobile Inverted Bottleneck Convolution)
-  - **SE**: 各チャネルの平均値を見て、重要なチャネルの出力を強め、不要なチャネルを弱める (Squeeze-and-Excitation, SE）
+  - **MBConv**: 拡張（1×1 Conv）→空間特徴計算（3×3 Depthwise Conv）→圧縮（1×1 Conv）を行うことで軽い計算コストと表現力のバランスが神 (Mobile Inverted Bottleneck Convolution)
+  - **SE (V3から)**: 各チャネルの平均値を見て、重要なチャネルの出力を強め、不要なチャネルを弱める (Squeeze-and-Excitation, SE）
 - **利点**: パラメータ数・FLOPs が小さく、軽量環境（推論速度重視）に向く
 - **学習上の傾向**: 軽量ゆえに表現力が限られるため、前処理と学習率設定の影響が出やすい
 
