@@ -144,4 +144,4 @@ WANDB で実験ログを記録する設定．wandbのアカウントがあれば
 
 ## License
 
-本リポジトリは MIT License のもとで公開されています。詳細は `LICENSE` をご確認ください。
+本リポジトリは `LICENSE`（MIT License）のもとで公開されています。
