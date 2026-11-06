@@ -6,14 +6,15 @@
 
 ### venv で開発する場合
 
+NVIDIA ドライバ 580 以上（CUDA 13.0 対応）が必要。`nvidia-smi` で確認できる。
+
 ```bash
 cd /path/to/zunda_ws
-python3 -m venv .venv
+# Python 3.12 を uv で用意する（uv: https://docs.astral.sh/uv/ ）
+uv venv --python 3.12 .venv
 source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-pip install -r requirements-mmcv.txt   # mmcv はプレビルド wheel（CUDA_HOME 不要）
-pip install -e .   # zunda パッケージをインストール
+uv pip install -r requirements.txt --index-strategy unsafe-best-match
+uv pip install -e .   # zunda パッケージをインストール
 ```
 
 ### Docker で開発する場合
@@ -23,7 +24,7 @@ cd /path/to/zunda_ws
 sh docker/run-docker.sh
 ```
 
-- 初回は `docker compose up -d --build` でイメージをビルド（`docker/requirements-runtime.txt` と `requirements-mmcv.txt` で依存関係をインストール。torch はベースイメージ同梱）。
+- 初回は `docker compose up -d --build` でイメージをビルド（`docker/requirements-runtime.txt` で依存関係をインストール。torch はベースイメージ同梱）。
 - コンテナ起動時に entrypoint が `/ws` を検知し、`pip install -e /ws` で zunda を自動インストールする。
 - コンテナ内の作業ディレクトリは `/ws`（ホストのリポジトリがマウントされている）。
 
@@ -49,6 +50,8 @@ Docker やリモートシェルではホスト側のブラウザを使って ZIP
 
 WANDB で実験ログを記録する設定．wandbのアカウントがあれば設定できる．
 
+**デフォルトはオフ**。使うときは学習時に `-o use_wandb=true` を指定する（または config の `use_wandb` を `true` にする）。
+
 ### 設定方法
 
 1. [wandb.ai](https://wandb.ai) でアカウント作成 → 設定ページから API キーを取得
@@ -67,7 +70,7 @@ WANDB で実験ログを記録する設定．wandbのアカウントがあれば
 ### その他の方法
 
 - **環境変数**: `export WANDB_API_KEY=your_api_key_here`
-- **WANDB を使わない**: 学習時に `-o use_wandb=false` を指定（例: `python train.py -o use_wandb=false`）
+- **WANDB を使う**: 学習時に `-o use_wandb=true` を指定（例: `python train.py configs/default.json -o use_wandb=true`）
 
 詳細は各 work_dir の README（例: `work_dirs/1_mlp/README.md`）を参照。
 
@@ -81,7 +84,7 @@ WANDB で実験ログを記録する設定．wandbのアカウントがあれば
   - [x] Deep-CNN (VGG / ResNet / MobileNet / EfficientNet / ConvNeXt)
   - [x] ViT
 
-- [ ] 言語（[シンプルずんだもん](https://huggingface.co/datasets/alfredplpl/simple-zundamon)・[dolly-15k-ja-zundamon](https://huggingface.co/datasets/takaaki-inada/databricks-dolly-15k-ja-zundamon)等で実施。現役のモデル構造に直結するもののみ）
+- [ ] 言語（[シンプルずんだもん](https://huggingface.co/datasets/alfredplpl/simple-zundamon)・[dolly-15k-ja-zundamon](https://huggingface.co/datasets/takaaki-inada/databricks-dolly-15k-ja-zundamon)等で実施）
   - [ ] 統計ベースライン（n-gram / TF-IDF）
   - [ ] 埋め込みベクトル（Word2Vec等）
   - [ ] BPE（トークナイザ）

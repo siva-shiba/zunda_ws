@@ -28,6 +28,9 @@ services:
     volumes:
       - ../:/ws
       - /tmp/.X11-unix:/tmp/.X11-unix
+      # タイムゾーンをホストに合わせる（outputs/ の実行 ID などがホストの時刻になる）
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     shm_size: 64gb
     runtime: nvidia
     tty: true

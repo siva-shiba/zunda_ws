@@ -192,12 +192,15 @@ class WandbCallback(Callback):
 
         try:
             self._log_plots(trainer.plots)
-            wandb.summary.update({
+            summary = {
                 "best_val_acc": trainer.metrics.get("best_val_acc", 0.0),
                 "best_epoch": trainer.metrics.get("best_epoch", 0),
-                "test_acc": trainer.metrics.get("test/acc", 0.0),
-                "test_loss": trainer.metrics.get("test/loss", 0.0),
-            })
+            }
+            # テスト評価をしていない場合（交差検証など）は 0 を記録しない
+            if "test/acc" in trainer.metrics:
+                summary["test_acc"] = trainer.metrics["test/acc"]
+                summary["test_loss"] = trainer.metrics["test/loss"]
+            wandb.summary.update(summary)
 
             wandb.finish()
             self._finished = True

@@ -118,15 +118,17 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
                 - samples: [(img_path, txt_path, label_idx), ...]
                 - class_to_idx: {class_name: class_idx}
         """
-        samples = []
-        class_to_idx = {}
 
         # ファイル名からクラス名へのマッピングを作成（rgb_zzm_プレフィックスを持つファイルのクラス推測用）
         # 既に分類されているデータから、ファイル名→クラス名のマッピングを作成
         filename_to_class: Dict[str, str] = {}
 
+        # rglob の順序はファイルシステム依存なので、ソートして分割・クラス番号を再現可能にする
+        all_paths = sorted(self.data_root.rglob('*'))
+        collected: List[Tuple[Path, Optional[Path], str]] = []
+
         # まず、すべての画像をスキャンしてファイル名→クラス名のマッピングを作成
-        for img_path in self.data_root.rglob('*'):
+        for img_path in all_paths:
             if not img_path.is_file():
                 continue
 
@@ -154,7 +156,7 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
                         filename_to_class[base_name] = normalized_name
 
         # 次に、すべての画像を処理してサンプルを作成
-        for img_path in self.data_root.rglob('*'):
+        for img_path in all_paths:
             if not img_path.is_file():
                 continue
 
@@ -193,18 +195,17 @@ class TouhokuProjectClassificationDataset(TouhokuProjectDataset):
                     normalized_name = matched_class
                     # print(f"ファイル名からクラスを推測: {filename} -> {normalized_name} (マッチ: {base_name})")
 
-            # クラスIDを取得または作成
-            if normalized_name not in class_to_idx:
-                class_to_idx[normalized_name] = len(class_to_idx)
-
-            label_idx = class_to_idx[normalized_name]
-
             # 対応するテキストファイルを探す
             txt_path = img_path.with_suffix('.txt')
             if not txt_path.exists():
                 txt_path = None
 
-            samples.append((img_path, txt_path, label_idx))
+            collected.append((img_path, txt_path, normalized_name))
+
+        # クラス番号はクラス名のアルファベット順で振る（見つかった順に依存させない）
+        class_names = sorted({name for _, _, name in collected})
+        class_to_idx = {name: i for i, name in enumerate(class_names)}
+        samples = [(p, t, class_to_idx[name]) for p, t, name in collected]
 
         return samples, class_to_idx
 

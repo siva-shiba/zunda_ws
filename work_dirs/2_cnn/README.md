@@ -60,7 +60,7 @@ python train.py configs/default.json \
 | lr | 学習率 | 0.001 |
 | fc_hidden | 全結合層の隠れユニット数 | 256 |
 | num_workers | DataLoader ワーカー数（共有メモリ不足時は 0 推奨） | 4 |
-| use_wandb | WANDB を使用する | true |
+| use_wandb | WANDB を使用する | false |
 
 ## ログ機能
 
@@ -152,8 +152,8 @@ python train.py configs/default.json \
     -o wandb_run_name=experiment-1 \
     -o wandb_tags=cnn,baseline
 
-# WANDBを使用しない
-python train.py configs/default.json -o use_wandb=false
+# WANDBを使用する（デフォルトはオフ）
+python train.py configs/default.json -o use_wandb=true
 ```
 
 ### WANDBに記録される情報

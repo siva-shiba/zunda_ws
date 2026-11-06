@@ -44,10 +44,6 @@ autodoc_mock_imports = [
     "pandas",
     "matplotlib",
     "seaborn",
-    "mmengine",
-    "mmpretrain",
-    "openmim",
     "wandb",
-    "neptune",
     "PIL",
 ]

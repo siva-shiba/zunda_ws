@@ -14,3 +14,9 @@ outputs/
 
 *.log
 *.pt
+*.pth
+
+*.egg-info/
+
+# ローカル用メモ・チェックリスト（git 管理外）
+/debug/

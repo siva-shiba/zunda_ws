@@ -44,7 +44,8 @@ class TouhokuProjectDataset(Dataset):
         samples = []
         
         # 再帰的に画像ファイルを検索
-        for img_path in self.data_root.rglob('*'):
+        # 環境によらず同じ順序になるようにソートする
+        for img_path in sorted(self.data_root.rglob('*')):
             if not img_path.is_file():
                 continue
                 

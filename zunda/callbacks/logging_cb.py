@@ -141,8 +141,6 @@ class LoggingCallback(Callback):
         metrics = trainer.metrics
         best_val_acc = metrics.get("best_val_acc", 0.0)
         best_epoch = metrics.get("best_epoch", 0)
-        test_loss = metrics.get("test/loss", 0.0)
-        test_acc = metrics.get("test/acc", 0.0)
 
         self.logger.info(f"ベスト検証精度: {best_val_acc:.4f} (Epoch {best_epoch})")
 
@@ -159,7 +157,11 @@ class LoggingCallback(Callback):
                 f"最終エポック - Val Loss: {metrics['final_val_loss']:.4f}, "
                 f"Val Acc: {metrics['final_val_acc']:.4f}"
             )
-        self.logger.info(f"テスト - Loss: {test_loss:.4f}, Acc: {test_acc:.4f}")
+        # テスト評価をしていない場合（交差検証などテストデータが空のとき）は表示しない
+        if "test/acc" in metrics:
+            self.logger.info(
+                f"テスト - Loss: {metrics['test/loss']:.4f}, Acc: {metrics['test/acc']:.4f}"
+            )
         self.logger.info(f"ベスト検証精度: {best_val_acc:.4f} (Epoch {best_epoch})")
         self.logger.info("=" * 60)
 

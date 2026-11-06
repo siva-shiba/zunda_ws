@@ -14,6 +14,7 @@ from .cv_adapters import (
 )
 from .dataset_adapters import (
     BaseDatasetAdapter,
+    CIFAR10Dataset,
     DATASET_REGISTRY,
     DatasetAdapterConfig,
     ImageLabelDictDataset,
@@ -21,6 +22,7 @@ from .dataset_adapters import (
     TouhokuDataset,
     register_dataset,
 )
+from .inference_data import build_eval_dataloaders, get_train_config
 from .losses import FocalLoss
 from .predictor import ClassificationPredictor
 from .utils import setup_logging
@@ -42,9 +44,12 @@ __all__ = [
     'DATASET_REGISTRY',
     'TouhokuDataset',
     'MNISTDataset',
+    'CIFAR10Dataset',
     'ImageLabelDictDataset',
     'register_dataset',
     'FocalLoss',
+    'build_eval_dataloaders',
+    'get_train_config',
     'ClassificationPredictor',
     'setup_logging',
 ]

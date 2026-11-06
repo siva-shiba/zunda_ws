@@ -9,7 +9,7 @@ import argparse
 import json
 import logging
 from pathlib import Path
-from dataclasses import dataclass, fields, MISSING
+from dataclasses import asdict, dataclass, fields, MISSING
 from typing import Dict, Optional, Tuple, Callable, Any
 import typing
 from datetime import datetime
@@ -25,7 +25,6 @@ from collections import Counter
 from zunda import (
     TouhokuProjectClassificationDataset,
     DATASET_REGISTRY,
-    TouhokuDataset,
     setup_logging,
     ClassificationPredictor,
 )
@@ -82,7 +81,7 @@ class TrainerConfig:
     focal_loss_alpha: float = 0.25  # Focal Lossのalphaパラメータ
     focal_loss_gamma: float = 2.0  # Focal Lossのgammaパラメータ
     # WANDB設定
-    use_wandb: bool = True
+    use_wandb: bool = False  # 有効にするときは -o use_wandb=true
     wandb_project: str = "deepcnn"
     wandb_entity: str = "zunda"
     wandb_run_name: str = None
@@ -453,6 +452,7 @@ class ClassificationTrainer:
                         'val_acc': val_acc,
                         'class_to_idx': self.class_to_idx,
                         'idx_to_class': self.idx_to_class,
+                        'train_config': asdict(self.cfg),  # 推論時にデータセット・分割を再現するため
                         'model_config': {
                             'model_name': self.cfg.model_name,
                             'pretrained': self.cfg.pretrained,
@@ -503,6 +503,7 @@ class ClassificationTrainer:
                 'val_acc': val_acc,
                 'class_to_idx': self.class_to_idx,
                 'idx_to_class': self.idx_to_class,
+                'train_config': asdict(self.cfg),  # 推論時にデータセット・分割を再現するため
                 'model_config': {
                     'model_name': self.cfg.model_name,
                     'pretrained': self.cfg.pretrained,
@@ -697,7 +698,7 @@ def config_dict_to_trainer_config(d: Dict[str, Any]) -> TrainerConfig:
     field_names = {f.name for f in fields(TrainerConfig)}
     merged = {**defaults, **d}
     if "data_root" not in merged or merged["data_root"] is None or merged["data_root"] == "":
-        if merged.get("dataset") == "mnist":
+        if merged.get("dataset") in ("mnist", "cifar10"):
             merged["data_root"] = "data"
         else:
             raise ValueError("data_root を設定ファイルまたは -o data_root=... で指定してください")
@@ -770,8 +771,8 @@ def parse_args():
 
 
 def build_transforms(cfg: TrainerConfig):
-    """Cross Validation 用の transforms 構築関数."""
-    return TouhokuDataset.build_default_transforms(cfg)
+    """transforms 構築関数. cfg.dataset のアダプタのデフォルト transforms を使う."""
+    return DATASET_REGISTRY[cfg.dataset].build_default_transforms(cfg)
 
 
 def main():

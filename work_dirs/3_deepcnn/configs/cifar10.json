@@ -1,0 +1,13 @@
+{
+  "_base_": "2_resnet.json",
+  "dataset": "cifar10",
+  "data_root": "data/cifar10",
+  "image_size": 224,
+  "batch_size": 64,
+  "epochs": 20,
+  "train_ratio": 0.9,
+  "val_ratio": 0.1,
+  "test_eval_interval": 1,
+  "wandb_project": "deepcnn",
+  "wandb_tags": ["resnet50", "cifar10"]
+}

@@ -1,0 +1,9 @@
+# Docker 用（torch / torchvision はベースイメージ pytorch/pytorch に同梱のため含めない）
+# torch 以外は requirements.txt と揃えること（ベースイメージの torch のバージョンも requirements.txt と揃える）
+
+# 実験管理・可視化
+wandb
+
+# 学習・評価
+scikit-learn
+seaborn

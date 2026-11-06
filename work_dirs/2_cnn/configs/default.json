@@ -6,7 +6,7 @@
   "lr": 0.001,
   "fc_hidden": 256,
   "seed": 42,
-  "use_wandb": true,
+  "use_wandb": false,
   "wandb_project": "cnn",
   "use_cv": false,
   "cv_folds": 5,

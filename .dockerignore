@@ -1,0 +1,4 @@
+# ビルドに必要なのは docker/ 内のファイルだけ（リポジトリは実行時に /ws へマウントする）
+*
+!docker/requirements-runtime.txt
+!docker/entrypoint.sh

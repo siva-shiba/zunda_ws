@@ -288,6 +288,76 @@ DataLoaderを作成するヘルパー関数。
 - `train_ratio + val_ratio + test_ratio` は 1.0 である必要があります
 - 分割はランダムに行われますが、`random_seed`を指定することで再現可能です
 
+## 公開データセットを追加する
+
+学習スクリプト（`work_dirs/*/train.py`）と推論スクリプト（`work_dirs/*/inference.py`）は、
+`DATASET_REGISTRY` に登録されたデータセットアダプタを config の `dataset` で選んで使う。
+新しい公開データセットは **`zunda/dataset_adapters.py` にアダプタを1つ追加するだけ** で、
+全 work_dir の学習・推論から使えるようになる。
+
+| 登録名 | アダプタ | 備考 |
+|---|---|---|
+| `touhoku` | `TouhokuDataset` | ずんだ画像（デフォルト） |
+| `mnist` | `MNISTDataset` | 1 チャネル、28px |
+| `cifar10` | `CIFAR10Dataset` | 3 チャネル、32px（`image_size` にリサイズ） |
+
+### 手順
+
+1. `zunda/dataset_adapters.py` に `BaseDatasetAdapter` を継承したクラスを書き、`@register_dataset("名前")` を付ける
+2. 3つのメソッドを実装する
+   - `get_in_channels(cfg)`: 入力チャネル数（グレースケールなら 1、RGB なら 3）
+   - `build_default_transforms(cfg)`: `(train_transform, val_transform)`。val 側は推論でも使うので augmentation を入れない
+   - `build_dataloaders(cfg, logger, build_transforms_func)`: `(train_loader, val_loader, test_loader, class_to_idx, idx_to_class)`
+3. torchvision のデータセットなら `_build_split_dataloaders` を使うと、train を train/val に分割して DataLoader を作るところまでやってくれる。
+   バッチは `{"image": ..., "label": ...}` の形にする必要があるので、自前で作る場合は `ImageLabelDictDataset` で包む
+4. config に `"dataset": "名前"` と `"data_root"` を書く（または `-o dataset=名前 -o data_root=...`）
+
+```python
+@register_dataset("fashion_mnist")
+class FashionMNISTDataset(BaseDatasetAdapter):
+    name = "fashion_mnist"
+
+    @staticmethod
+    def get_in_channels(cfg):
+        return 1
+
+    @staticmethod
+    def build_default_transforms(cfg):
+        tf = transforms.Compose([
+            transforms.Resize((cfg.image_size, cfg.image_size)),
+            transforms.ToTensor(),
+            transforms.Normalize((0.2860,), (0.3530,)),
+        ])
+        return tf, tf
+
+    @classmethod
+    def build_dataloaders(cls, cfg, logger, build_transforms_func=None):
+        from torchvision.datasets import FashionMNIST
+
+        train_tf, val_tf = (build_transforms_func or cls.build_default_transforms)(cfg)
+        root = str(cfg.data_root)
+        train_full = FashionMNIST(root, train=True, download=True, transform=train_tf)
+        val_full = FashionMNIST(root, train=True, download=False, transform=val_tf)
+        test_ds = FashionMNIST(root, train=False, download=True, transform=val_tf)
+        return _build_split_dataloaders(cfg, logger, train_full, val_full, test_ds, list(train_full.classes))
+```
+
+### 推論との関係
+
+学習時の設定はチェックポイントの `train_config` に丸ごと保存される。
+`inference.py` はそこから `dataset`・`data_root`・分割比・seed を読み、`build_eval_dataloaders` で学習時と同じ分割を再現する
+（transforms は各 work_dir の `build_transforms` の val 側）。そのため推論側の追加作業はない。
+
+```bash
+python inference.py outputs/<run_id>/checkpoints/best_model.pt          # data_root は学習時の値
+python inference.py outputs/<run_id>/checkpoints/best_model.pt /other/path  # 上書きも可
+```
+
+### 注意
+
+- 交差検証（`use_cv=true`）は今のところ `touhoku` のみ対応
+- `4_vit` はデータセットによらず ImageNet の mean/std で正規化する（学習済み ViT に合わせるため）。1 チャネルのデータセットはそのままでは使えない
+
 ## データ構造
 
 データセットは以下の構造を想定しています：

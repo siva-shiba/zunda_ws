@@ -1,4 +1,4 @@
-FROM pytorch/pytorch:2.6.0-cuda11.8-cudnn9-devel
+FROM pytorch/pytorch:2.14.1-cuda13.0-cudnn9-runtime
 
 WORKDIR /ws
 
@@ -9,22 +9,25 @@ RUN apt-get update && \
     locale-gen && \
     rm -rf /var/lib/apt/lists/*
 
+# ベースイメージは Ubuntu 24.04 のシステム Python（PEP 668 で pip 直接インストールが禁止）。
+# コンテナ専用環境なので pip でのインストールを許可する（entrypoint の pip install -e も同様）
 ENV LANG=ja_JP.UTF-8 \
     LANGUAGE=ja_JP:ja \
-    LC_ALL=ja_JP.UTF-8
+    LC_ALL=ja_JP.UTF-8 \
+    PIP_BREAK_SYSTEM_PACKAGES=1
 
-COPY docker/requirements-runtime.txt requirements-mmcv.txt /tmp/
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r /tmp/requirements-runtime.txt && \
-    pip install --no-cache-dir -r /tmp/requirements-mmcv.txt && \
-    rm -f /tmp/requirements-runtime.txt /tmp/requirements-mmcv.txt
+COPY docker/requirements-runtime.txt /tmp/
+RUN pip install --no-cache-dir -r /tmp/requirements-runtime.txt && \
+    rm -f /tmp/requirements-runtime.txt
 
 ARG UID
 ARG GID
 ARG USERNAME
 ARG GROUPNAME
 
-RUN groupadd -g "$GID" "$GROUPNAME" && \
+# Ubuntu 24.04 イメージには UID/GID 1000 の ubuntu ユーザーが既にあるので、衝突する場合は削除する
+RUN if id ubuntu >/dev/null 2>&1; then userdel -r ubuntu; fi && \
+    groupadd -g "$GID" "$GROUPNAME" && \
     useradd -m -u "$UID" -g "$GID" "$USERNAME" && \
     chown "$USERNAME:$GROUPNAME" -R /ws
 

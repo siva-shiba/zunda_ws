@@ -6,7 +6,7 @@
   "lr": 0.001,
   "hidden_size": 512,
   "seed": 42,
-  "use_wandb": true,
+  "use_wandb": false,
   "wandb_project": "mlp",
   "use_cv": false,
   "cv_folds": 5,

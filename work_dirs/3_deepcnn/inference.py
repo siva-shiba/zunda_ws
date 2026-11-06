@@ -4,7 +4,7 @@ import sys
 import argparse
 import logging
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -20,11 +20,13 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from zunda import (
-    TouhokuProjectClassificationDataset,
+    build_eval_dataloaders,
+    get_train_config,
     setup_logging,
     ClassificationPredictor,
 )
 from model import build_deepcnn_model  # noqa: E402
+from train import build_transforms  # noqa: E402  学習時と同じ transforms を使う
 
 
 def load_checkpoint(checkpoint_path: Path, device: torch.device) -> Dict:
@@ -100,43 +102,40 @@ def create_model_from_checkpoint(
 
 
 def create_dataloaders(
-    data_root: str,
-    image_size: int,
+    checkpoint: Dict,
+    data_root: Optional[str],
+    image_size: Optional[int],
     batch_size: int,
     num_workers: int,
     class_to_idx: Dict[str, int],
-    seed: int = 42
-) -> Tuple[DataLoader, DataLoader, DataLoader]:
-    """学習/検証/テストデータローダーを作成."""
+    seed: Optional[int] = None,
+) -> Tuple:
+    """学習時と同じデータセット・分割で、学習/検証/テストの DataLoader を作成.
+
+    データセットと分割はチェックポイントの train_config から再現する
+    (train_config がない古いチェックポイントはずんだ画像として扱う)。
+    transforms は train.py の build_transforms の検証用を使う。
+    """
     logger = logging.getLogger(__name__)
 
-    inference_transform = transforms.Compose([
-        transforms.Resize((image_size, image_size)),
-        transforms.ToTensor(),
-    ])
-
-    create_dl = TouhokuProjectClassificationDataset.create_classification_train_val_test_dataloaders
-    train_loader, val_loader, test_loader, _, _ = create_dl(
-            data_root=data_root,
-            train_ratio=0.7,
-            val_ratio=0.15,
-            test_ratio=0.15,
-            batch_size=batch_size,
-            shuffle_train=False,
-            num_workers=num_workers,
-            pin_memory=True,
-            train_transform=inference_transform,
-            val_transform=inference_transform,
-            test_transform=inference_transform,
-            random_seed=seed,
+    if "train_config" not in checkpoint:
+        logger.warning(
+            "train_config がない古いチェックポイントです。ずんだ画像として読み込みますが、"
+            "train/val/test の分割は学習時と一致しない可能性があります"
         )
-
-    logger.info(f"学習データ: {len(train_loader.dataset)} サンプル")
-    logger.info(f"検証データ: {len(val_loader.dataset)} サンプル")
-    logger.info(f"テストデータ: {len(test_loader.dataset)} サンプル")
-
+    train_config = get_train_config(checkpoint)
+    train_loader, val_loader, test_loader, _, _ = build_eval_dataloaders(
+        train_config,
+        logger,
+        build_transforms_func=build_transforms,
+        data_root=data_root,
+        image_size=image_size,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        seed=seed,
+        class_to_idx=class_to_idx,
+    )
     return train_loader, val_loader, test_loader
-
 
 def parse_args():
     """コマンドライン引数を解析."""
@@ -149,7 +148,9 @@ def parse_args():
     parser.add_argument(
         "data_root",
         type=str,
-        help="データセットのルートディレクトリパス（例: /ws/data/touhoku_project_images）"
+        nargs="?",
+        default=None,
+        help="データセットのルートディレクトリ（省略時は学習時の data_root）"
     )
     parser.add_argument(
         "--image-size",
@@ -181,8 +182,8 @@ def parse_args():
         "--seed",
         "-s",
         type=int,
-        default=42,
-        help="乱数シード（デフォルト: 42）"
+        default=None,
+        help="乱数シード（省略時は学習時の seed）"
     )
     parser.add_argument(
         "--results-dir",
@@ -211,9 +212,9 @@ def main():
     )
     logger.info(f"使用デバイス: {device}")
 
-    torch.manual_seed(args.seed)
+    torch.manual_seed(args.seed if args.seed is not None else 42)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.seed)
+        torch.cuda.manual_seed_all(args.seed if args.seed is not None else 42)
 
     try:
         checkpoint_path = Path(args.checkpoint_path)
@@ -225,6 +226,7 @@ def main():
         image_size = args.image_size if args.image_size is not None else config['image_size']
 
         train_loader, val_loader, test_loader = create_dataloaders(
+            checkpoint=checkpoint,
             data_root=args.data_root,
             image_size=image_size,
             batch_size=args.batch_size,

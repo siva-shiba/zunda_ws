@@ -1,19 +1,13 @@
-# PyTorch（venv 用 / CUDA 11.8。Docker はベースイメージ同梱のため torch 行は docker/requirements-runtime.txt に含めない）
---extra-index-url https://download.pytorch.org/whl/cu118
-torch==2.6.0
-torchvision==0.21.0
+# PyTorch（venv 用 / CUDA 13.0、NVIDIA ドライバ 580 以上が必要）
+# Docker はベースイメージに同梱のため、torch の行は docker/requirements-runtime.txt に含めない
+# バージョンを上げるときは docker/Dockerfile のベースイメージも揃えること
+--extra-index-url https://download.pytorch.org/whl/cu130
+torch==2.14.1
+torchvision==0.29.1
 
 # 実験管理・可視化
-neptune
 wandb
 
 # 学習・評価
 scikit-learn
 seaborn
-
-
-# OpenMMLab（mmcv はソースビルドで CUDA_HOME が必要なため別ファイルで wheel を指定）
-openmim
-mmengine
-mmpretrain
-# mmcv は pip install -r requirements-mmcv.txt でインストール

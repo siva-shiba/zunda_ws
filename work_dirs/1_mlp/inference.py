@@ -4,7 +4,7 @@ import sys
 import argparse
 import logging
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -22,11 +22,13 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from zunda import (
-    TouhokuProjectClassificationDataset,
+    build_eval_dataloaders,
+    get_train_config,
     setup_logging,
     ClassificationPredictor,
 )
 from model import SimpleMLP
+from train import build_transforms  # noqa: E402  学習時と同じ transforms を使う
 
 
 def load_checkpoint(checkpoint_path: Path, device: torch.device) -> Dict:
@@ -73,20 +75,25 @@ def create_model_from_checkpoint(checkpoint: Dict, device: torch.device) -> Tupl
     # モデルの設定を推測（チェックポイントに保存されていない場合のデフォルト値）
     # 実際のモデル構造から推測する必要がある
     # ここでは、state_dictから推測するか、デフォルト値を使用
-    hidden_size = 512  # デフォルト値（必要に応じてチェックポイントに保存する）
+    hidden_size = 512  # デフォルト値
     image_size = 256  # デフォルト値
 
-    # state_dictから入力サイズを推測
+    # state_dictから入力サイズ・隠れ層サイズを推測
     first_layer_key = [k for k in checkpoint['model_state_dict'].keys() if 'net.1.weight' in k or 'net.0.weight' in k]
     if first_layer_key:
-        # Linear層の重みから入力サイズを取得
+        # Linear層の重み (hidden_size, input_size) から取得
         first_layer_weight = checkpoint['model_state_dict'][first_layer_key[0]]
-        input_size = first_layer_weight.shape[1]
+        hidden_size, input_size = first_layer_weight.shape
         # 画像サイズを推測（RGB画像の場合）
         if input_size % 3 == 0:
             image_size = int(np.sqrt(input_size // 3))
     else:
         input_size = image_size * image_size * 3
+
+    # 学習時の設定があれば、画像サイズはそちらを優先（MNIST など 1 チャネルにも対応）
+    train_config = checkpoint.get('train_config')
+    if train_config and train_config.get('image_size'):
+        image_size = train_config['image_size']
 
     logger.info(f"モデル設定: input_size={input_size}, hidden_size={hidden_size}, num_classes={num_classes}")
 
@@ -114,57 +121,40 @@ def create_model_from_checkpoint(checkpoint: Dict, device: torch.device) -> Tupl
 
 
 def create_dataloaders(
-    data_root: str,
-    image_size: int,
+    checkpoint: Dict,
+    data_root: Optional[str],
+    image_size: Optional[int],
     batch_size: int,
     num_workers: int,
     class_to_idx: Dict[str, int],
-    seed: int = 42
-) -> Tuple[DataLoader, DataLoader, DataLoader]:
-    """学習/検証/テストデータローダーを作成.
+    seed: Optional[int] = None,
+) -> Tuple:
+    """学習時と同じデータセット・分割で、学習/検証/テストの DataLoader を作成.
 
-    Args:
-        data_root: データセットのルートディレクトリ
-        image_size: 画像サイズ
-        batch_size: バッチサイズ
-        num_workers: ワーカー数
-        class_to_idx: クラス名からインデックスへのマッピング
-        seed: 乱数シード
-
-    Returns:
-        (train_loader, val_loader, test_loader)
+    データセットと分割はチェックポイントの train_config から再現する
+    (train_config がない古いチェックポイントはずんだ画像として扱う)。
+    transforms は train.py の build_transforms の検証用を使う。
     """
     logger = logging.getLogger(__name__)
 
-    # 推論用のtransform（データ拡張なし）
-    inference_transform = transforms.Compose([
-        transforms.Resize((image_size, image_size)),
-        transforms.ToTensor(),
-    ])
-
-    # 学習/検証/テストデータローダーを作成
-    train_loader, val_loader, test_loader, _, _ = \
-        TouhokuProjectClassificationDataset.create_classification_train_val_test_dataloaders(
-            data_root=data_root,
-            train_ratio=0.7,
-            val_ratio=0.15,
-            test_ratio=0.15,
-            batch_size=batch_size,
-            shuffle_train=False,  # 推論時はシャッフル不要
-            num_workers=num_workers,
-            pin_memory=True,
-            train_transform=inference_transform,
-            val_transform=inference_transform,
-            test_transform=inference_transform,
-            random_seed=seed,
+    if "train_config" not in checkpoint:
+        logger.warning(
+            "train_config がない古いチェックポイントです。ずんだ画像として読み込みますが、"
+            "train/val/test の分割は学習時と一致しない可能性があります"
         )
-
-    logger.info(f"学習データ: {len(train_loader.dataset)} サンプル")
-    logger.info(f"検証データ: {len(val_loader.dataset)} サンプル")
-    logger.info(f"テストデータ: {len(test_loader.dataset)} サンプル")
-
+    train_config = get_train_config(checkpoint)
+    train_loader, val_loader, test_loader, _, _ = build_eval_dataloaders(
+        train_config,
+        logger,
+        build_transforms_func=build_transforms,
+        data_root=data_root,
+        image_size=image_size,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        seed=seed,
+        class_to_idx=class_to_idx,
+    )
     return train_loader, val_loader, test_loader
-
 
 def parse_args():
     """コマンドライン引数を解析."""
@@ -177,7 +167,9 @@ def parse_args():
     parser.add_argument(
         "data_root",
         type=str,
-        help="データセットのルートディレクトリパス（例: /ws/data/touhoku_project_images）"
+        nargs="?",
+        default=None,
+        help="データセットのルートディレクトリ（省略時は学習時の data_root）"
     )
     parser.add_argument(
         "--image-size",
@@ -209,8 +201,8 @@ def parse_args():
         "--seed",
         "-s",
         type=int,
-        default=42,
-        help="乱数シード（デフォルト: 42）"
+        default=None,
+        help="乱数シード（省略時は学習時の seed）"
     )
     parser.add_argument(
         "--results-dir",
@@ -239,9 +231,9 @@ def main():
     logger.info(f"使用デバイス: {device}")
 
     # 乱数シードを設定
-    torch.manual_seed(args.seed)
+    torch.manual_seed(args.seed if args.seed is not None else 42)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.seed)
+        torch.cuda.manual_seed_all(args.seed if args.seed is not None else 42)
 
     try:
         # チェックポイントをロード
@@ -254,6 +246,7 @@ def main():
 
         # 学習/検証/テストデータローダーを作成
         train_loader, val_loader, test_loader = create_dataloaders(
+            checkpoint=checkpoint,
             data_root=args.data_root,
             image_size=config['image_size'],
             batch_size=args.batch_size,

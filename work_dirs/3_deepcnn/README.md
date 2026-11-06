@@ -99,6 +99,11 @@ python train.py configs/<config名>.json [-o KEY=VALUE ...]
 | `configs/3_mobilenet.json` | MobileNet | mobilenet_v3_small |
 | `configs/4_efficientnet.json` | EfficientNet | efficientnet_b0 |
 | `configs/5_convnext.json` | ConvNeXt | convnext_tiny |
+| `configs/cifar10.json` | ResNet（CIFAR-10 で比較用） | resnet50 |
+
+`cifar10.json` は `"dataset": "cifar10"` で公開データセットに切り替える例です（`data/cifar10` に自動ダウンロード）。
+ずんだ画像での精度が低いとき、モデル側の問題かデータ側の問題かを切り分けるベースラインとして使います。
+他のモデルでも `-o dataset=cifar10 -o data_root=data/cifar10` で同様に試せます。
 
 ### Config 継承（_base_）
 
@@ -153,7 +158,7 @@ python train.py configs/5_convnext.json -o data_root=data/touhoku_project_images
 | lr | 学習率 | 0.001 |
 | pretrained | ImageNet事前学習済み重みを使うか | false |
 | num_workers | DataLoader ワーカー数 | 4 |
-| use_wandb | WANDB を使用する | true |
+| use_wandb | WANDB を使用する | false |
 
 ### 利用可能な model_name
 
@@ -199,8 +204,8 @@ Docker環境で `RuntimeError: DataLoader worker exited unexpectedly` が発生�
 python train.py configs/1_vgg.json -o num_workers=0
 ```
 
-### WANDBを使わない
+### WANDBを使う（デフォルトはオフ）
 
 ```bash
-python train.py configs/1_vgg.json -o use_wandb=false
+python train.py configs/1_vgg.json -o use_wandb=true
 ```
